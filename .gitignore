@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+release/
+
+# 临时图标生成目录
+build/icon.iconset/
+
+# 截图与预览图
+shot-*.png
+icon-preview.png
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
