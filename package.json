@@ -48,7 +48,10 @@
       "package.json"
     ],
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
       "hardenedRuntime": false,
@@ -56,13 +59,23 @@
       "identity": null
     },
     "win": {
-      "target": ["nsis"],
-      "icon": "build/icon.ico"
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
     },
     "linux": {
-      "target": ["AppImage"],
-      "category": "Office"
+      "target": [
+        "AppImage"
+      ],
+      "category": "Office",
+      "icon": "build/icon.png"
     },
-    "npmRebuild": false
+    "npmRebuild": false,
+    "publish": {
+      "provider": "github",
+      "owner": "Riven1324",
+      "repo": "legal-work-space"
+    }
   }
 }

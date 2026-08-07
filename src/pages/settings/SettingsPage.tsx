@@ -205,7 +205,7 @@ export default function SettingsPage() {
           <Info size={16} /> 关于
         </h2>
         <p className="text-sm text-text-muted">
-          Legal Work Space v{form.version ?? '1.0.0'} · 民商事诉讼律师个人工作台 · 纯前端本地存储
+          Legal Work Space v{form.version ?? '1.0.0'} · 律师工作台 · 纯前端本地存储
         </p>
       </div>
 

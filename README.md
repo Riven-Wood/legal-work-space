@@ -1,6 +1,6 @@
 # Legal Work Space
 
-民商事诉讼律师个人工作台 —— 一个界面完成所有工作，操作极简。
+律师工作台 —— 一个界面完成所有工作，操作极简。
 
 纯前端本地应用：React + TypeScript + Tailwind CSS + Dexie.js（IndexedDB），数据完全保存在本地浏览器存储，隐私优先，不上传任何服务器。支持浏览器使用，也可打包为 macOS / Windows / Linux 桌面应用（Electron）。
 
