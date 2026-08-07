@@ -73,7 +73,7 @@
     "npmRebuild": false,
     "publish": {
       "provider": "github",
-      "owner": "Riven1324",
+      "owner": "Riven-Wood",
       "repo": "legal-work-space"
     },
     "electronDist": "node_modules/electron/dist"
