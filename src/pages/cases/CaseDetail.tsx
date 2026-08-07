@@ -32,7 +32,7 @@ import { db } from '../../db/database'
 import { useApp } from '../../store/AppContext'
 import type { LawCase, Client, DocFile, Todo, CalendarEvent, CaseTimeline, Retainer } from '../../types'
 import { CASE_STAGES, type CaseStage, type TimelineType } from '../../types'
-import { fmtDate, fmtDateTime, daysUntil, fmtMoney, fmtHours } from '../../utils/dates'
+import { fmtDate, fmtDateTime, fmtDateInput, daysUntil, fmtMoney, fmtHours } from '../../utils/dates'
 import { formatBytes, downloadBlob } from '../../utils/format'
 import { Tag } from '../../components/ui/Tag'
 import { Modal, ConfirmDialog } from '../../components/ui/Modal'
@@ -660,7 +660,7 @@ function QuickTodo({ onAdd }: { onAdd: (text: string) => void }) {
 }
 
 function TimelineModal({ open, onClose, caseId }: { open: boolean; onClose: () => void; caseId: number }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(fmtDateInput())
   const [type, setType] = useState<TimelineType>('filing')
   const [title, setTitle] = useState('')
   const [note, setNote] = useState('')

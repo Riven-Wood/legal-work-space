@@ -18,7 +18,7 @@ import {
 import { db } from '../../db/database'
 import { useApp } from '../../store/AppContext'
 import type { Client, LawCase, ContactRecord, DocFile } from '../../types'
-import { fmtDate } from '../../utils/dates'
+import { fmtDate, fmtDateInput } from '../../utils/dates'
 import { Modal } from '../../components/ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
 import { EmptyState } from '../../components/ui/EmptyState'
@@ -336,7 +336,7 @@ function ClientForm({ open, onClose }: { open: boolean; onClose: () => void }) {
 }
 
 function ContactModal({ open, onClose, clientId }: { open: boolean; onClose: () => void; clientId: number }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(fmtDateInput())
   const [content, setContent] = useState('')
 
   const save = async () => {

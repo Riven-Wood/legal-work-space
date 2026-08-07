@@ -41,7 +41,7 @@ interface AppContextType {
   timer: TimerState | null
   runningSeconds: number
   startTimer: (caseId: number, description?: string) => void
-  stopTimer: () => void
+  endTimer: () => void
   toggleTimer: () => void
   searchOpen: boolean
   setSearchOpen: (v: boolean) => void
@@ -101,7 +101,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const startTimer = useCallback(
     (caseId: number, description?: string) => {
       setTimer((prev) => {
-        if (prev?.running) {
+        // 已存在计时（无论运行中还是暂停中）：先结束并保存上一段，再开始新计时
+        if (prev) {
           persistStop(prev)
         }
         const t: TimerState = {
@@ -120,12 +121,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [persistStop],
   )
 
-  const stopTimer = useCallback(() => {
+  // 结束计时：保存工时记录并清除计时器状态
+  const endTimer = useCallback(() => {
     setTimer((prev) => {
-      if (!prev?.running) return prev
+      if (!prev) return prev
       persistStop(prev)
       setRunningSeconds(0)
-      return { ...prev, running: false }
+      return null
     })
   }, [persistStop])
 
@@ -133,11 +135,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTimer((prev) => {
       if (!prev) return prev
       if (prev.running) {
+        // 暂停：仅停表，不落库（避免同一段工作重复记账）
         const elapsed = prev.accumulated + Math.floor((Date.now() - prev.lastTick) / 1000)
-        persistStop(prev)
         setRunningSeconds(0)
         return { ...prev, running: false, accumulated: elapsed, lastTick: Date.now() }
       }
+      // 继续
       return { ...prev, running: true, lastTick: Date.now() }
     })
   }, [persistStop])
@@ -150,7 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         timer,
         runningSeconds,
         startTimer,
-        stopTimer,
+        endTimer,
         toggleTimer,
         searchOpen,
         setSearchOpen,

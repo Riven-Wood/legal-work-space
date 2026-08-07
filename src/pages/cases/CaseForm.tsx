@@ -6,7 +6,7 @@ import type { LawCase, Client } from '../../types'
 import { Modal } from '../../components/ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
 import { CAUSES, similarity } from '../../utils/format'
-import { todayStamp } from '../../utils/dates'
+import { todayStamp, fmtDateInput } from '../../utils/dates'
 import { useApp } from '../../store/AppContext'
 
 interface Props {
@@ -19,6 +19,7 @@ interface Props {
 export function CaseForm({ open, onClose, prefill, isEdit }: Props) {
   const { navigate } = useApp()
   const clients = useLiveQuery(() => db.clients.where('deleted').equals(0).toArray(), []) as Client[] | undefined
+  const cases = useLiveQuery(() => db.cases.where('deleted').equals(0).toArray(), []) as LawCase[] | undefined
 
   const [name, setName] = useState('')
   const [clientMode, setClientMode] = useState<'select' | 'new'>('select')
@@ -43,7 +44,7 @@ export function CaseForm({ open, onClose, prefill, isEdit }: Props) {
       setCounterparty(prefill?.counterparty ?? '')
       setCourt(prefill?.court ?? '')
       setCaseNo(prefill?.caseNo ?? '')
-      setFiledDate(prefill?.filedDate ? new Date(prefill.filedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10))
+      setFiledDate(prefill?.filedDate ? fmtDateInput(prefill.filedDate) : fmtDateInput())
       setFee(prefill?.fee ? String(prefill.fee) : '')
       setRisk(prefill?.risk ?? 'medium')
       setNotes(prefill?.notes ?? '')
@@ -59,8 +60,14 @@ export function CaseForm({ open, onClose, prefill, isEdit }: Props) {
       const s = similarity(kw, c.name)
       if (s >= 0.5) res.push({ source: '现有客户', name: c.name, score: s })
     }
-    return res.sort((a, b) => b.score - a.score).slice(0, 3)
-  }, [counterparty, clients])
+    for (const c of cases ?? []) {
+      if (prefill?.id && c.id === prefill.id) continue
+      if (!c.counterparty) continue
+      const s = similarity(kw, c.counterparty)
+      if (s >= 0.5) res.push({ source: '已有案件对方当事人', name: c.counterparty, score: s })
+    }
+    return res.sort((a, b) => b.score - a.score).slice(0, 4)
+  }, [counterparty, clients, cases, prefill])
 
   const clientName = clientMode === 'select' ? clients?.find((c) => c.id === clientId)?.name ?? '' : newClientName.trim()
 

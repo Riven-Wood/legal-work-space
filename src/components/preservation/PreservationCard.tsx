@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { ShieldWarning, Plus, ArrowClockwise, PencilSimple, Trash, X } from '@phosphor-icons/react'
 import { db } from '../../db/database'
 import type { Preservation, PreservationType, PreservationMeasure } from '../../types'
-import { fmtDate, daysUntil } from '../../utils/dates'
+import { fmtDate, fmtDateInput, daysUntil } from '../../utils/dates'
 import { Modal, ConfirmDialog } from '../ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../ui/Field'
 
@@ -150,7 +150,7 @@ export function PreservationForm({
   const calcEnd = () => {
     if (!startDate) return
     const end = autoCalcEndDate(new Date(startDate).getTime(), measure)
-    setEndDate(new Date(end).toISOString().slice(0, 10))
+    setEndDate(fmtDateInput(end))
   }
 
   const save = async () => {
@@ -366,6 +366,14 @@ function RenewModal({ open, onClose, p }: { open: boolean; onClose: () => void; 
       status: 'renewed',
       updatedAt: Date.now(),
     })
+    // 同步更新关联的"保全到期"日历事件日期
+    const expiryEvents = await db.events
+      .where('caseId').equals(p.caseId)
+      .and((e) => e.type === 'preservation-expiry' && !e.deleted && (e.title || '').includes(p.target))
+      .toArray()
+    for (const ev of expiryEvents) {
+      await db.events.update(ev.id!, { date: new Date(newDate).getTime(), updatedAt: Date.now() })
+    }
     onClose()
   }
 

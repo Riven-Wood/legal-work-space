@@ -51,6 +51,15 @@ export function dayStr(ts: number): string {
   return format(new Date(ts), 'yyyy-MM-dd')
 }
 
+/** 本地时区的 YYYY-MM-DD（用于 <input type="date"> 默认值/回显，避免 toISOString 的 UTC 偏移） */
+export function fmtDateInput(ts?: number | null): string {
+  const d = ts ? new Date(ts) : new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 export function strToDay(s: string): number {
   return parseISO(s).getTime()
 }

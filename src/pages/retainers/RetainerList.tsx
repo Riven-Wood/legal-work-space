@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus, Handshake, MagnifyingGlass, ArrowRight, Dot } from '@phosphor-icons/react'
 import { db } from '../../db/database'
 import { useApp } from '../../store/AppContext'
 import type { Retainer, Client, RetainerWork, RetainerServiceType } from '../../types'
-import { fmtDate, fmtHours, daysUntil } from '../../utils/dates'
+import { fmtDate, fmtHours, fmtDateInput, daysUntil } from '../../utils/dates'
 import { fmtMoney } from '../../utils/dates'
 import { Modal } from '../../components/ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
@@ -161,7 +161,42 @@ export function RetainerForm({ open, onClose, prefill }: { open: boolean; onClos
   const [paymentMethod, setPaymentMethod] = useState('一次性付清')
   const [contactName, setContactName] = useState('')
   const [contactPhone, setContactPhone] = useState('')
+  const [onsite, setOnsite] = useState(false)
   const [notes, setNotes] = useState('')
+
+  // 编辑模式：打开时用 prefill 回填全部字段
+  useEffect(() => {
+    if (!open) return
+    if (prefill?.id) {
+      setClientMode(prefill.clientId ? 'select' : 'new')
+      setClientId(prefill.clientId ?? '')
+      setNewClientName(prefill.clientId ? '' : prefill.clientName)
+      setStartDate(fmtDateInput(prefill.startDate))
+      setEndDate(fmtDateInput(prefill.endDate))
+      setAmount(String(prefill.amount ?? ''))
+      setServices(prefill.services ?? [])
+      setContractNo(prefill.contractNo ?? '')
+      setPaymentMethod(prefill.paymentMethod ?? '一次性付清')
+      setContactName(prefill.contactName ?? '')
+      setContactPhone(prefill.contactPhone ?? '')
+      setOnsite(prefill.onsiteRequired ?? false)
+      setNotes(prefill.notes ?? '')
+    } else {
+      setClientMode('select')
+      setClientId('')
+      setNewClientName('')
+      setStartDate('')
+      setEndDate('')
+      setAmount('')
+      setServices([])
+      setContractNo('')
+      setPaymentMethod('一次性付清')
+      setContactName('')
+      setContactPhone('')
+      setOnsite(false)
+      setNotes('')
+    }
+  }, [open, prefill])
 
   const clientName = clientMode === 'select' ? clients?.find((c) => c.id === clientId)?.name ?? '' : newClientName.trim()
   const canSave = clientName && startDate && endDate && services.length > 0
@@ -185,6 +220,7 @@ export function RetainerForm({ open, onClose, prefill }: { open: boolean; onClos
       paymentMethod,
       contactName: contactName.trim() || undefined,
       contactPhone: contactPhone.trim() || undefined,
+      onsiteRequired: onsite,
       notes: notes.trim() || undefined,
       status: 'active' as const,
       updatedAt: now,
@@ -285,9 +321,26 @@ export function RetainerForm({ open, onClose, prefill }: { open: boolean; onClos
           <TextInput value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
         </Field>
         <Field label="是否有驻场要求">
-          <Select value={''} onChange={() => {}}>
-            <option value="">否</option>
-          </Select>
+          <button
+            type="button"
+            onClick={() => setOnsite((v) => !v)}
+            className={`flex w-full items-center justify-between rounded-btn border px-3 py-2.5 text-sm transition ${
+              onsite ? 'border-accent bg-bg-warm text-text-main' : 'border-border text-text-muted hover:bg-bg-warm/60'
+            }`}
+          >
+            <span>{onsite ? '需要驻场服务' : '无需驻场（仅线上/到所服务）'}</span>
+            <span
+              className={`flex h-5 w-9 shrink-0 items-center rounded-full px-0.5 transition ${
+                onsite ? 'bg-accent' : 'bg-border'
+              }`}
+            >
+              <span
+                className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  onsite ? 'translate-x-4' : ''
+                }`}
+              />
+            </span>
+          </button>
         </Field>
         <div className="col-span-2">
           <Field label="备注">

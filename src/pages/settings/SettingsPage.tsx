@@ -26,6 +26,7 @@ export default function SettingsPage() {
   const [form, setForm] = useState<Partial<Settings>>({})
   const [saved, setSaved] = useState(false)
   const [clearOpen, setClearOpen] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
 
   useEffect(() => {
     if (settings && Object.keys(form).length === 0) setForm(settings)
@@ -70,7 +71,7 @@ export default function SettingsPage() {
     downloadBlob(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }), `LegalWorkSpace备份_${fmtDateTime(Date.now()).replace(/[.:\s]/g, '-')}.json`)
   }
 
-  const importData = (file: File) => {
+  const doImport = (file: File) => {
     const reader = new FileReader()
     reader.onload = async () => {
       try {
@@ -191,7 +192,7 @@ export default function SettingsPage() {
           </button>
           <label className="btn-ghost btn-sm cursor-pointer">
             <Upload size={14} /> 导入数据（JSON 恢复）
-            <input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files?.[0] && importData(e.target.files[0])} />
+            <input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files?.[0] && setImportFile(e.target.files[0])} />
           </label>
           <button className="btn-danger btn-sm" onClick={() => setClearOpen(true)}>
             <Trash size={14} /> 清空所有数据
@@ -215,6 +216,19 @@ export default function SettingsPage() {
           {saved ? '已保存' : '保存设置'}
         </button>
       </div>
+
+      <ConfirmDialog
+        open={!!importFile}
+        title="导入数据"
+        message="导入将用备份文件覆盖当前全部数据（案件、客户、文档、日程等），当前数据会被清空！建议先导出备份。确定继续导入吗？"
+        confirmText="确认导入"
+        danger
+        onCancel={() => setImportFile(null)}
+        onConfirm={() => {
+          if (importFile) doImport(importFile)
+          setImportFile(null)
+        }}
+      />
 
       <ConfirmDialog
         open={clearOpen}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   Clock,
@@ -11,11 +11,14 @@ import {
   TrendUp,
   CurrencyCny,
   Wallet,
+  Play,
+  Pause,
+  Stop,
 } from '@phosphor-icons/react'
 import { db } from '../../db/database'
 import { useApp } from '../../store/AppContext'
 import type { TimeRecord, LawCase, Invoice, RetainerWork, Settings } from '../../types'
-import { fmtDate, fmtHours, fmtMoney, fmtDateTime, daysUntil } from '../../utils/dates'
+import { fmtDate, fmtHours, fmtMoney, fmtDateTime, fmtDuration, fmtDateInput, daysUntil } from '../../utils/dates'
 import { Modal, ConfirmDialog } from '../../components/ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
 import { EmptyState } from '../../components/ui/EmptyState'
@@ -56,10 +59,16 @@ export default function BillingPage() {
 
 // ========== 工时记录 ==========
 function TimeRecords() {
+  const { timer, runningSeconds, startTimer, toggleTimer, endTimer } = useApp()
   const [caseFilter, setCaseFilter] = useState<number | ''>('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [addOpen, setAddOpen] = useState(false)
+  const [startOpen, setStartOpen] = useState(false)
+  const [startCaseId, setStartCaseId] = useState<number | ''>('')
+  const [startDesc, setStartDesc] = useState('')
+  const [savedTip, setSavedTip] = useState('')
+  const savedTipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<TimeRecord | null>(null)
 
   const records = useLiveQuery(() => db.timeRecords.where('deleted').equals(0).toArray(), []) as TimeRecord[] | undefined
@@ -70,6 +79,7 @@ function TimeRecords() {
     | undefined
 
   const caseMap = useMemo(() => new Map((cases ?? []).map((c) => [c.id, c.name])), [cases])
+  const activeCases = useMemo(() => (cases ?? []).filter((c) => c.status === 'active'), [cases])
 
   const includeRetainer = settings?.includeRetainerHours ?? true
 
@@ -114,8 +124,78 @@ function TimeRecords() {
 
   const totalMinutes = filtered.reduce((s, r) => s + r.minutes, 0)
 
+  const timerSeconds = timer?.running ? runningSeconds : timer?.accumulated ?? 0
+
+  const startNew = () => {
+    if (!startCaseId) return
+    startTimer(Number(startCaseId), startDesc.trim() || undefined)
+    setStartOpen(false)
+    setStartCaseId('')
+    setStartDesc('')
+  }
+
+  const finishTimer = () => {
+    const total = timer
+      ? timer.accumulated + (timer.running ? Math.floor((Date.now() - timer.lastTick) / 1000) : 0)
+      : 0
+    endTimer()
+    setSavedTip(total >= 10 ? '✓ 已保存工时记录' : '计时不足 10 秒，未保存')
+    if (savedTipTimer.current) clearTimeout(savedTipTimer.current)
+    savedTipTimer.current = setTimeout(() => setSavedTip(''), 3000)
+  }
+
   return (
     <div>
+      {/* 计时器 */}
+      <div className="card mb-5 px-4 py-3">
+        {!timer ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-text-main">工时计时</p>
+              <p className="text-xs text-text-muted">记录你在某个案件上的实际工作耗时，结束后自动保存为工时记录，可用于「账单生成」按费率计费。</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {savedTip && <span className="text-xs font-medium text-success">{savedTip}</span>}
+              <button className="btn-primary btn-sm" onClick={() => setStartOpen(true)}>
+                <Play size={13} /> 开始计时
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-4">
+            <span
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+                timer.running ? 'bg-accent text-white' : 'bg-bg-warm text-accent'
+              }`}
+            >
+              <Clock size={18} weight={timer.running ? 'fill' : 'regular'} />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-text-main">
+                {timer.caseId ? caseMap.get(timer.caseId) ?? '已删除案件' : '未关联案件'}
+              </p>
+              <p className="truncate text-xs text-text-muted">{timer.description || '未填写工作内容'}</p>
+            </div>
+            <span className={`text-2xl font-semibold tabular-nums ${timer.running ? 'text-accent' : 'text-text-muted'}`}>
+              {fmtDuration(timerSeconds)}
+            </span>
+            <span className={`rounded-full px-2 py-0.5 text-xs ${timer.running ? 'bg-success/10 text-success' : 'bg-bg-warm text-text-muted'}`}>
+              {timer.running ? '计时中' : '已暂停'}
+            </span>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {savedTip && <span className="text-xs font-medium text-success">{savedTip}</span>}
+              <button className="btn-ghost btn-sm" onClick={toggleTimer} title={timer.running ? '暂停' : '继续'}>
+                {timer.running ? <Pause size={14} /> : <Play size={14} />}
+                {timer.running ? '暂停' : '继续'}
+              </button>
+              <button className="btn-primary btn-sm" onClick={finishTimer}>
+                <Stop size={14} /> 结束并保存
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="card mb-5 flex flex-wrap items-center gap-3 px-4 py-3">
         <Select value={caseFilter} onChange={(e) => setCaseFilter(e.target.value ? Number(e.target.value) : '')} className="!w-48 !py-1.5 text-xs">
           <option value="">全部案件</option>
@@ -179,6 +259,45 @@ function TimeRecords() {
 
       <AddTimeModal open={addOpen} onClose={() => setAddOpen(false)} cases={cases ?? []} />
 
+      {/* 开始计时 */}
+      <Modal
+        open={startOpen}
+        onClose={() => setStartOpen(false)}
+        title={timer ? '切换案件继续计时' : '开始计时'}
+        width={460}
+        footer={
+          <>
+            <button className="btn-ghost" onClick={() => setStartOpen(false)}>
+              取消
+            </button>
+            <button className="btn-primary" onClick={startNew} disabled={!startCaseId}>
+              开始计时
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="关联案件" required>
+            <Select value={startCaseId} onChange={(e) => setStartCaseId(Number(e.target.value))}>
+              <option value="">请选择案件</option>
+              {activeCases.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="工作内容简述">
+            <TextInput value={startDesc} onChange={(e) => setStartDesc(e.target.value)} placeholder="如：起草起诉状、研究证据…" />
+          </Field>
+          {timer && (
+            <p className="text-xs text-text-muted">
+              当前计时：{timer.caseId ? (caseMap.get(timer.caseId) ?? '') : ''} — 开始新计时将自动结束并保存当前这一段
+            </p>
+          )}
+        </div>
+      </Modal>
+
       {/* 删除确认 */}
       <ConfirmDialog
         open={!!confirmDelete}
@@ -208,7 +327,7 @@ function AddTimeModal({
   cases: LawCase[]
 }) {
   const [caseId, setCaseId] = useState<number | ''>('')
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(fmtDateInput())
   const [start, setStart] = useState('09:00')
   const [end, setEnd] = useState('10:00')
   const [minutes, setMinutes] = useState('60')
@@ -293,8 +412,8 @@ function AddTimeModal({
 // ========== 账单生成 ==========
 function InvoiceGen() {
   const [caseId, setCaseId] = useState<number | ''>('')
-  const [from, setFrom] = useState(new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().slice(0, 10))
-  const [to, setTo] = useState(new Date().toISOString().slice(0, 10))
+  const [from, setFrom] = useState(fmtDateInput(new Date(new Date().setMonth(new Date().getMonth() - 1)).getTime()))
+  const [to, setTo] = useState(fmtDateInput())
   const [travelFee, setTravelFee] = useState('0')
   const [courtFee, setCourtFee] = useState('0')
   const [otherFee, setOtherFee] = useState('0')

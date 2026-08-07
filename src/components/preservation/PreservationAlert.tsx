@@ -82,7 +82,10 @@ export function PreservationAlert() {
           </button>
           <button
             className="btn-danger"
-            onClick={() => navigate({ page: 'preservation' })}
+            onClick={() => {
+              setDismissedFor(today)
+              navigate({ page: 'preservation' })
+            }}
           >
             跳转处理 <ArrowRight size={15} />
           </button>

@@ -30,7 +30,7 @@ import type {
   Client,
   DocFile,
 } from '../../types'
-import { fmtDate, fmtHours, fmtMoney, daysUntil, fmtDateTime } from '../../utils/dates'
+import { fmtDate, fmtHours, fmtMoney, daysUntil, fmtDateTime, fmtDateInput } from '../../utils/dates'
 import { formatBytes, downloadBlob } from '../../utils/format'
 import { Modal, ConfirmDialog } from '../../components/ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
@@ -340,7 +340,7 @@ function WorkTab({ retainer, works, onAdd }: { retainer: Retainer; works: Retain
 }
 
 function WorkModal({ open, onClose, retainer }: { open: boolean; onClose: () => void; retainer: Retainer }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(fmtDateInput())
   const [type, setType] = useState<RetainerServiceType>(retainer.services[0] ?? '法律咨询')
   const [content, setContent] = useState('')
   const [hours, setHours] = useState('1')
@@ -515,7 +515,7 @@ function ContractTab({
 }
 
 function PayModal({ open, onClose, retainer }: { open: boolean; onClose: () => void; retainer: Retainer }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(fmtDateInput())
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
   const [voucher, setVoucher] = useState<File | null>(null)
@@ -811,11 +811,8 @@ function ReportModal({
         createdAt: now,
         updatedAt: now,
       })
-      .then(() => {
-        onClose()
-        window.open(`#report-${Date.now()}`, '_self')
-      })
-    // 直接打开预览打印
+      .catch(() => {})
+    // 打开预览打印
     openReportPrint(retainer, periodWorks, receiver || retainer.contactName || '', summary, fromDate, toDate)
     onClose()
   }
