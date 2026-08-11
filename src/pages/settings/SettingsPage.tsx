@@ -8,6 +8,7 @@ import {
   Download,
   Trash,
   Check,
+  ArrowClockwise,
 } from '@phosphor-icons/react'
 import { db, getSettings } from '../../db/database'
 import type { Settings } from '../../types'
@@ -25,6 +26,8 @@ import {
 } from '../../backup/backupCodec'
 import { clearApplicationData, exportDatabase, restoreDatabase } from '../../backup/backupService'
 import { APP_VERSION } from '../../utils/appVersion'
+import { isDesktopUpdaterAvailable } from '../../utils/desktopUpdater'
+import { triggerManualUpdateCheck } from '../../components/updater/UpdateManager'
 
 type DataOperation = 'export' | 'import' | 'clear'
 
@@ -190,9 +193,16 @@ export default function SettingsPage() {
         <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-text-main">
           <Info size={16} /> 关于
         </h2>
-        <p className="text-sm text-text-muted">
-          Legal Work Space v{APP_VERSION} · 律师工作台 · 纯前端本地存储
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-text-muted">
+            Legal Work Space v{APP_VERSION} · 律师工作台 · 纯前端本地存储
+          </p>
+          {isDesktopUpdaterAvailable() && (
+            <button className="btn-ghost btn-sm" onClick={triggerManualUpdateCheck}>
+              <ArrowClockwise size={13} /> 检查更新
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mt-6 flex justify-end">

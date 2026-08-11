@@ -5,6 +5,7 @@ import { TopBar } from './components/layout/TopBar'
 import { GlobalSearch } from './components/layout/GlobalSearch'
 import { useApp } from './store/AppContext'
 import { PreservationAlert } from './components/preservation/PreservationAlert'
+import { UpdateManager } from './components/updater/UpdateManager'
 import { getPageLoader, RouteErrorBoundary, RouteLoading } from './appRoutes'
 
 function Router() {
@@ -33,6 +34,7 @@ function Shell() {
       </div>
       <GlobalSearch />
       <PreservationAlert />
+      <UpdateManager />
     </div>
   )
 }
