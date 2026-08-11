@@ -77,6 +77,7 @@
       "icon": "build/icon.png"
     },
     "linux": {
+      "artifactName": "Legal-Work-Space-${version}-linux-x64.${ext}",
       "target": [
         "AppImage"
       ],
