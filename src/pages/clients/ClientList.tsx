@@ -10,16 +10,16 @@ import {
   MapPin,
   IdentificationBadge,
   ChatCircleDots,
-  NotePencil,
   Paperclip,
   Briefcase,
-  X,
+  PencilSimple,
+  Trash,
 } from '@phosphor-icons/react'
 import { db } from '../../db/database'
 import { useApp } from '../../store/AppContext'
 import type { Client, LawCase, ContactRecord, DocFile } from '../../types'
 import { fmtDate, fmtDateInput } from '../../utils/dates'
-import { Modal } from '../../components/ui/Modal'
+import { Modal, ConfirmDialog } from '../../components/ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { CaseForm } from '../cases/CaseForm'
@@ -29,6 +29,7 @@ export default function ClientList() {
   const [kw, setKw] = useState('')
   const [selectedId, setSelectedId] = useState<number | null>(nav.clientId ?? null)
   const [addOpen, setAddOpen] = useState(false)
+  const [editClient, setEditClient] = useState<Client | null>(null)
 
   const clients = useLiveQuery(() => db.clients.where('deleted').equals(0).toArray(), []) as Client[] | undefined
   const cases = useLiveQuery(() => db.cases.where('deleted').equals(0).toArray(), []) as LawCase[] | undefined
@@ -106,7 +107,11 @@ export default function ClientList() {
       {/* 右侧详情 */}
       <div className="card flex-1 overflow-y-auto">
         {selected ? (
-          <ClientDetail client={selected} />
+          <ClientDetail
+            client={selected}
+            onEdit={() => setEditClient(selected)}
+            onDeleted={() => setSelectedId(null)}
+          />
         ) : (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-text-muted">选择左侧客户查看详情</p>
@@ -115,14 +120,26 @@ export default function ClientList() {
       </div>
 
       <ClientForm open={addOpen} onClose={() => setAddOpen(false)} />
+      {editClient && (
+        <ClientForm key={editClient.id} open client={editClient} onClose={() => setEditClient(null)} />
+      )}
     </div>
   )
 }
 
-function ClientDetail({ client }: { client: Client }) {
+function ClientDetail({
+  client,
+  onEdit,
+  onDeleted,
+}: {
+  client: Client
+  onEdit: () => void
+  onDeleted: () => void
+}) {
   const { navigate } = useApp()
   const [contactOpen, setContactOpen] = useState(false)
   const [caseFormOpen, setCaseFormOpen] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const relatedCases = useLiveQuery(
     () => db.cases.where('clientId').equals(client.id!).and((c) => !c.deleted).toArray(),
@@ -146,6 +163,14 @@ function ClientDetail({ client }: { client: Client }) {
         <div>
           <h2 className="text-lg font-semibold text-text-main">{client.name}</h2>
           <p className="text-xs text-text-muted">{client.type === 'company' ? '企业客户' : '个人客户'}</p>
+        </div>
+        <div className="ml-auto flex gap-2">
+          <button className="btn-ghost btn-sm" onClick={onEdit}>
+            <PencilSimple size={13} /> 编辑
+          </button>
+          <button className="btn-ghost btn-sm text-danger" onClick={() => setConfirmDelete(true)}>
+            <Trash size={13} /> 删除
+          </button>
         </div>
       </div>
 
@@ -252,30 +277,49 @@ function ClientDetail({ client }: { client: Client }) {
       </div>
 
       <ContactModal open={contactOpen} onClose={() => setContactOpen(false)} clientId={client.id!} />
+
+      {/* 删除客户确认（软删除，关联业务记录保留） */}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="删除客户"
+        message={`确定删除客户「${client.name}」吗？该客户关联 ${relatedCases?.length ?? 0} 个案件、${records?.length ?? 0} 条沟通记录、${docs?.length ?? 0} 份文档，删除后这些业务记录仍会保留，但客户不再显示。`}
+        confirmText="删除"
+        danger
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={async () => {
+          await db.clients.update(client.id!, { deleted: Date.now(), updatedAt: Date.now() })
+          setConfirmDelete(false)
+          onDeleted()
+        }}
+      />
     </div>
   )
 }
 
-function ClientForm({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [name, setName] = useState('')
-  const [type, setType] = useState<'person' | 'company'>('person')
-  const [phone, setPhone] = useState('')
-  const [address, setAddress] = useState('')
-  const [idNumber, setIdNumber] = useState('')
-  const [notes, setNotes] = useState('')
+function ClientForm({ open, onClose, client }: { open: boolean; onClose: () => void; client?: Client }) {
+  const [name, setName] = useState(client?.name ?? '')
+  const [type, setType] = useState<'person' | 'company'>(client?.type ?? 'person')
+  const [phone, setPhone] = useState(client?.phone ?? '')
+  const [address, setAddress] = useState(client?.address ?? '')
+  const [idNumber, setIdNumber] = useState(client?.idNumber ?? '')
+  const [notes, setNotes] = useState(client?.notes ?? '')
 
   const save = async () => {
     if (!name.trim()) return
-    await db.clients.add({
+    const data = {
       name: name.trim(),
       type,
       phone: phone.trim() || undefined,
       address: address.trim() || undefined,
       idNumber: idNumber.trim() || undefined,
       notes: notes.trim() || undefined,
-      createdAt: Date.now(),
       updatedAt: Date.now(),
-    })
+    }
+    if (client?.id != null) {
+      await db.clients.update(client.id, data)
+    } else {
+      await db.clients.add({ ...data, createdAt: Date.now() })
+    }
     onClose()
     setName('')
     setPhone('')
@@ -285,7 +329,7 @@ function ClientForm({ open, onClose }: { open: boolean; onClose: () => void }) {
     <Modal
       open={open}
       onClose={onClose}
-      title="新建客户"
+      title={client ? '编辑客户' : '新建客户'}
       width={520}
       footer={
         <>
