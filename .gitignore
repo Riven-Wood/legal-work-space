@@ -24,3 +24,6 @@ Thumbs.db
 .vscode/
 .idea/
 tsconfig.tsbuildinfo
+
+# Vite 临时文件（dev server 加载 TS 配置时生成）
+vite.config.ts.timestamp-*
