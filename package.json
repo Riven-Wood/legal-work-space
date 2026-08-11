@@ -8,13 +8,14 @@
     "dev": "vite",
     "test": "vitest run",
     "check": "npm test && npx tsc -b --pretty false && vite build && node --check electron/main.cjs",
-    "build": "tsc -b && vite build",
+    "clean": "node -e \"const fs=require('fs');['dist','release'].forEach(d=>fs.rmSync(d,{recursive:true,force:true}))\"",
+    "build": "npm run clean && tsc -b && vite build",
     "preview": "vite preview",
     "desktop": "npm run build && electron .",
     "desktop:dev": "vite",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:linux": "npm run build && electron-builder --linux"
+    "dist:mac": "npm run clean && npm run build && electron-builder --mac",
+    "dist:win": "npm run clean && npm run build && electron-builder --win",
+    "dist:linux": "npm run clean && npm run build && electron-builder --linux"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.7",
