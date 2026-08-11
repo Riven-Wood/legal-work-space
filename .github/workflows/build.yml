@@ -24,11 +24,11 @@ jobs:
             artifact: 'mac-x64'
             expected: 'release/Legal-Work-Space-1.0.0-mac-x64.dmg'
           - os: windows-latest
-            args: '--win'
+            args: '--win --x64'
             artifact: 'win'
             expected: 'release/Legal-Work-Space-1.0.0-win-x64.exe'
           - os: ubuntu-latest
-            args: '--linux'
+            args: '--linux --x64'
             artifact: 'linux'
             expected: 'release/Legal-Work-Space-1.0.0-linux-x64.AppImage'
     runs-on: ${{ matrix.os }}
