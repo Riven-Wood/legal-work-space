@@ -1,5 +1,15 @@
 import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { db, ensureSettings } from '../db/database'
+import { ensureSettings } from '../db/database'
+import {
+  elapsedTimerSeconds,
+  pauseTimer,
+  resumeTimer,
+  restoreConsultationTimer,
+  startOfLocalDay,
+  type ConsultationTimerState,
+} from '../utils/consultationTimer'
+import { saveTimerConsultation } from '../utils/consultationTimerPersistence'
+import { createTimerStopCoordinator, type TimerEndResult } from '../utils/consultationTimerLifecycle'
 
 // ===== 导航 =====
 export type PageKey =
@@ -10,6 +20,7 @@ export type PageKey =
   | 'docs'
   | 'calendar'
   | 'billing'
+  | 'consultation'
   | 'preservation'
   | 'settings'
 
@@ -18,21 +29,16 @@ export interface NavState {
   caseId?: number
   clientId?: number
   retainerId?: number
-  docId?: number
-  templateId?: number
-  billingTab?: 'records' | 'invoice' | 'revenue'
-  docsTab?: 'library' | 'templates' | 'editor'
+  billingTab?: 'invoice' | 'revenue'
 }
 
-// ===== 计时器 =====
-export interface TimerState {
-  running: boolean
-  startedAt: number
-  caseId?: number
-  description?: string
-  accumulated: number // 已累计秒数（不含当前段）
-  lastTick: number
-  startDate: number // 记录起始日（用于落库日期）
+// ===== 计时器（法律咨询计时） =====
+export type TimerState = ConsultationTimerState
+
+const TIMER_STORAGE_KEY = 'lawyer-workbench:consultation-timer'
+
+function restoreTimer(): TimerState | null {
+  return restoreConsultationTimer(localStorage.getItem(TIMER_STORAGE_KEY))
 }
 
 interface AppContextType {
@@ -40,8 +46,9 @@ interface AppContextType {
   navigate: (patch: Partial<NavState>) => void
   timer: TimerState | null
   runningSeconds: number
-  startTimer: (caseId: number, description?: string) => void
-  endTimer: () => void
+  timerSaving: boolean
+  startTimer: (opts?: { caseId?: number; clientId?: number; consultant?: string; content?: string }) => Promise<TimerStartResult>
+  endTimer: () => Promise<TimerEndResult | { status: 'no-timer'; timer: null }>
   toggleTimer: () => void
   searchOpen: boolean
   setSearchOpen: (v: boolean) => void
@@ -49,17 +56,30 @@ interface AppContextType {
   bumpRefresh: () => void
 }
 
+export type TimerStartResult = { status: 'started' } | { status: 'failed'; error: string }
+
 const AppContext = createContext<AppContextType | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [nav, setNav] = useState<NavState>({ page: 'dashboard' })
-  const [timer, setTimer] = useState<TimerState | null>(null)
+  const [timer, setTimer] = useState<TimerState | null>(restoreTimer)
   const [searchOpen, setSearchOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [runningSeconds, setRunningSeconds] = useState(0)
+  const [timerSaving, setTimerSaving] = useState(false)
+  const stopTimer = useRef(createTimerStopCoordinator(saveTimerConsultation))
 
   const navigate = useCallback((patch: Partial<NavState>) => {
-    setNav((prev) => ({ ...prev, ...patch }))
+    setNav((prev) => {
+      const next = { ...prev, ...patch }
+      // 清除未显式传入的详情参数，避免残留 caseId/retainerId 导致
+      // 「返回列表」或侧边栏切换后仍停留在详情页（无法返回上一界面）
+      if (!('caseId' in patch)) next.caseId = undefined
+      if (!('clientId' in patch)) next.clientId = undefined
+      if (!('retainerId' in patch)) next.retainerId = undefined
+      if (!('billingTab' in patch)) next.billingTab = undefined
+      return next
+    })
   }, [])
 
   const bumpRefresh = useCallback(() => setRefreshKey((k) => k + 1), [])
@@ -69,81 +89,92 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ensureSettings().catch(() => {})
   }, [])
 
+  useEffect(() => {
+    if (timer) localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(timer))
+    else localStorage.removeItem(TIMER_STORAGE_KEY)
+  }, [timer])
+
   // 运行中的计时器每秒刷新显示
   useEffect(() => {
     if (!timer?.running) return
     const iv = setInterval(() => {
-      setRunningSeconds(timer.accumulated + Math.floor((Date.now() - timer.lastTick) / 1000))
+      setRunningSeconds(elapsedTimerSeconds(timer, Date.now()))
     }, 1000)
     return () => clearInterval(iv)
   }, [timer])
 
-  const persistStop = useCallback((t: TimerState) => {
-    const elapsed = t.accumulated + Math.floor((Date.now() - t.lastTick) / 1000)
-    if (elapsed < 10 || !t.caseId) return
-    const minutes = Math.round(elapsed / 60)
-    db.timeRecords
-      .add({
-        caseId: t.caseId,
-        date: t.startDate,
-        start: t.startedAt,
-        end: Date.now(),
-        minutes: Math.max(1, minutes),
-        description: t.description,
-        source: 'timer',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      })
-      .then(() => bumpRefresh())
-      .catch(() => {})
-  }, [bumpRefresh])
+  const persistStop = useCallback((t: TimerState, stoppedAt: number) => {
+    return stopTimer.current(t, stoppedAt)
+  }, [])
 
   const startTimer = useCallback(
-    (caseId: number, description?: string) => {
-      setTimer((prev) => {
-        // 已存在计时（无论运行中还是暂停中）：先结束并保存上一段，再开始新计时
-        if (prev) {
-          persistStop(prev)
+    async (opts?: { caseId?: number; clientId?: number; consultant?: string; content?: string }): Promise<TimerStartResult> => {
+      const now = Date.now()
+      if (timer) {
+        const frozen = pauseTimer(timer, now)
+        setTimer(frozen)
+        localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(frozen))
+        setTimerSaving(true)
+        const previous = await persistStop(frozen, now)
+        setTimerSaving(false)
+        if (previous.status === 'failed') {
+          setTimer(frozen)
+          return { status: 'failed', error: previous.error }
         }
-        const t: TimerState = {
+        if (previous.status === 'saved') bumpRefresh()
+      }
+      const t: TimerState = {
+          id: crypto.randomUUID(),
           running: true,
-          startedAt: Date.now(),
-          caseId,
-          description,
+          startedAt: now,
+          caseId: opts?.caseId,
+          clientId: opts?.clientId,
+          consultant: opts?.consultant,
+          description: opts?.content,
           accumulated: 0,
-          lastTick: Date.now(),
-          startDate: Date.now(),
+          lastTick: now,
+          startDate: startOfLocalDay(now),
         }
-        setRunningSeconds(0)
-        return t
-      })
+      setRunningSeconds(0)
+      setTimer(t)
+      return { status: 'started' }
     },
-    [persistStop],
+    [bumpRefresh, persistStop, timer],
   )
 
-  // 结束计时：保存工时记录并清除计时器状态
-  const endTimer = useCallback(() => {
-    setTimer((prev) => {
-      if (!prev) return prev
-      persistStop(prev)
-      setRunningSeconds(0)
-      return null
-    })
-  }, [persistStop])
+  // 结束时先同步冻结并保留恢复状态；真实落库成功后才清理。
+  const endTimer = useCallback(async () => {
+    if (!timer) return { status: 'no-timer' as const, timer: null }
+    const stoppedAt = Date.now()
+    const frozen = pauseTimer(timer, stoppedAt)
+    setRunningSeconds(frozen.accumulated)
+    setTimer(frozen)
+    localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(frozen))
+    setTimerSaving(true)
+    const result = await persistStop(frozen, stoppedAt)
+    setTimerSaving(false)
+    if (result.status === 'failed') {
+      setTimer((current) => current?.id === frozen.id ? result.timer : current)
+      return result
+    }
+    setRunningSeconds(0)
+    setTimer((current) => current?.id === frozen.id ? null : current)
+    if (result.status === 'saved') bumpRefresh()
+    return result
+  }, [bumpRefresh, persistStop, timer])
 
   const toggleTimer = useCallback(() => {
-    setTimer((prev) => {
-      if (!prev) return prev
-      if (prev.running) {
-        // 暂停：仅停表，不落库（避免同一段工作重复记账）
-        const elapsed = prev.accumulated + Math.floor((Date.now() - prev.lastTick) / 1000)
-        setRunningSeconds(0)
-        return { ...prev, running: false, accumulated: elapsed, lastTick: Date.now() }
-      }
-      // 继续
-      return { ...prev, running: true, lastTick: Date.now() }
-    })
-  }, [persistStop])
+    if (!timer) return
+    const now = Date.now()
+    if (timer.running) {
+      const paused = pauseTimer(timer, now)
+      setRunningSeconds(paused.accumulated)
+      setTimer(paused)
+    } else {
+      setRunningSeconds(timer.accumulated)
+      setTimer(resumeTimer(timer, now))
+    }
+  }, [timer])
 
   return (
     <AppContext.Provider
@@ -152,6 +183,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         navigate,
         timer,
         runningSeconds,
+        timerSaving,
         startTimer,
         endTimer,
         toggleTimer,

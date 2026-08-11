@@ -5,7 +5,7 @@ import {
   Alarm,
   Briefcase,
   Handshake,
-  Clock,
+  Chats,
   TrendUp,
   Check,
   FileText,
@@ -13,54 +13,55 @@ import {
   X,
   FolderOpen,
   Lightning,
+  Plus,
+  PencilSimple,
+  Trash,
 } from '@phosphor-icons/react'
 import { db } from '../db/database'
 import { useApp } from '../store/AppContext'
-import type { LawCase, Retainer, TimeRecord, Todo, Preservation, DocFile, CalendarEvent } from '../types'
-import { fmtDate, fmtHours, fmtMoney, daysUntil, todayStamp, isToday } from '../utils/dates'
+import type { LawCase, Retainer, LegalConsultation, InvoiceFile, Todo, Preservation, DocFile, CalendarEvent } from '../types'
+import { fmtDate, fmtMoney, daysUntil } from '../utils/dates'
 import { CASE_STAGES } from '../types'
-import { getSettings } from '../db/database'
 
 export default function Dashboard() {
   const { navigate } = useApp()
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  // 今日待办编辑状态
+  const [newTodo, setNewTodo] = useState('')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editText, setEditText] = useState('')
 
   const cases = useLiveQuery(() => db.cases.where('deleted').equals(0).toArray(), []) as LawCase[] | undefined
   const retainers = useLiveQuery(() => db.retainers.where('deleted').equals(0).toArray(), []) as Retainer[] | undefined
-  const times = useLiveQuery(() => db.timeRecords.where('deleted').equals(0).toArray(), []) as TimeRecord[] | undefined
+  const consultations = useLiveQuery(() => db.legalConsultations.where('deleted').equals(0).toArray(), []) as
+    | LegalConsultation[]
+    | undefined
+  const invoiceFiles = useLiveQuery(() => db.invoiceFiles.where('deleted').equals(0).toArray(), []) as
+    | InvoiceFile[]
+    | undefined
   const todos = useLiveQuery(() => db.todos.where('deleted').equals(0).toArray(), []) as Todo[] | undefined
   const preservations = useLiveQuery(() => db.preservations.where('deleted').equals(0).toArray(), []) as
     | Preservation[]
     | undefined
   const docs = useLiveQuery(() => db.docs.where('deleted').equals(0).toArray(), []) as DocFile[] | undefined
   const events = useLiveQuery(() => db.events.where('deleted').equals(0).toArray(), []) as CalendarEvent[] | undefined
-  const retainerWorks = useLiveQuery(() => db.retainerWorks.where('deleted').equals(0).toArray(), []) as
-    | (import('../types').RetainerWork)[]
-    | undefined
-  const retainerPayments = useLiveQuery(() => db.retainerPayments.where('deleted').equals(0).toArray(), []) as
-    | (import('../types').RetainerPayment)[]
-    | undefined
-  const settings = useLiveQuery(() => getSettings(), []) as (import('../types').Settings) | undefined
 
   const activeCases = (cases ?? []).filter((c) => c.status === 'active')
 
-  // 本月工时（含常法，可选）
+  // 本月统计（咨询次数 + 发票金额 = 收入口径）
   const monthStart = useMemo(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime(), [])
-  const monthMinutes = useMemo(() => {
-    let m = (times ?? []).filter((t) => t.date >= monthStart).reduce((s, t) => s + t.minutes, 0)
-    if (settings?.includeRetainerHours !== false) {
-      m += (retainerWorks ?? []).filter((w) => w.date >= monthStart).reduce((s, w) => s + w.hours * 60, 0)
-    }
-    return m
-  }, [times, retainerWorks, monthStart, settings])
-
-  // 本月创收（收案律师费 + 常法付款）
   const nextMonthStart = useMemo(() => new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).getTime(), [])
-  const monthRevenue = useMemo(() => {
-    const caseFee = (cases ?? []).filter((c) => c.filedDate && c.filedDate >= monthStart && c.filedDate < nextMonthStart).reduce((sum, c) => sum + (c.fee ?? 0), 0)
-    const retainerPaid = (retainerPayments ?? []).filter((p) => p.date >= monthStart && p.date < nextMonthStart).reduce((sum, p) => sum + p.amount, 0)
-    return caseFee + retainerPaid
-  }, [cases, retainerPayments, monthStart, nextMonthStart])
+  const monthConsultCount = useMemo(
+    () => (consultations ?? []).filter((c) => c.date >= monthStart && c.date < nextMonthStart).length,
+    [consultations, monthStart, nextMonthStart],
+  )
+  const monthInvoiceFee = useMemo(
+    () =>
+      (invoiceFiles ?? [])
+        .filter((f) => f.amount !== undefined && f.date >= monthStart && f.date < nextMonthStart)
+        .reduce((s, f) => s + (f.amount ?? 0), 0),
+    [invoiceFiles, monthStart, nextMonthStart],
+  )
 
   // 待续期保全（已过期 + 30天内）
   const urgentPres = (preservations ?? []).filter((p) => {
@@ -112,9 +113,40 @@ export default function Dashboard() {
   }
   const visibleBanners = banners.filter((b) => !dismissed.has(b.id))
 
-  // 今日待办（todos + 今日事件）
-  const todayEvents = (events ?? []).filter((e) => isToday(e.date) && daysUntil(e.date) >= 0)
+  // 今日待办：自由待办 + 自动归集的事件
+  // 事件归集规则：① 今天的事件；② 设置了"提前3天提醒"且处于提醒生效期（到期前3天内）的事件；③ 还有正好3天到期的事件（无论是否设提醒）
+  const todayEvents = (events ?? []).filter((e) => {
+    const d = daysUntil(e.date)
+    if (d < 0) return false
+    if (d === 0) return true
+    if (e.reminder === '3d' && d <= 3) return true
+    if (d === 3) return true
+    return false
+  })
   const todayTodos = (todos ?? []).filter((t) => !t.done && (!t.dueDate || daysUntil(t.dueDate) <= 0))
+
+  // 待办操作：添加 / 编辑 / 删除 / 完成
+  const addTodo = async () => {
+    const text = newTodo.trim()
+    if (!text) return
+    await db.todos.add({
+      text,
+      done: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    setNewTodo('')
+  }
+  const saveEdit = async (t: Todo) => {
+    const text = editText.trim()
+    if (text) {
+      await db.todos.update(t.id!, { text, updatedAt: Date.now() })
+    }
+    setEditingId(null)
+  }
+  const deleteTodo = (t: Todo) => {
+    db.todos.update(t.id!, { deleted: Date.now(), updatedAt: Date.now() })
+  }
 
   // 案件阶段分布
   const stageDist = useMemo(() => {
@@ -169,15 +201,15 @@ export default function Dashboard() {
           onClick={() => navigate({ page: 'retainers' })}
         />
         <DashCard
-          icon={<Clock size={18} />}
-          label="本月工时"
-          value={fmtHours(monthMinutes)}
-          onClick={() => navigate({ page: 'billing', billingTab: 'records' })}
+          icon={<Chats size={18} />}
+          label="本月咨询"
+          value={String(monthConsultCount)}
+          onClick={() => navigate({ page: 'consultation' })}
         />
         <DashCard
           icon={<TrendUp size={18} />}
-          label="本月创收"
-          value={fmtMoney(monthRevenue)}
+          label="本月发票金额"
+          value={fmtMoney(monthInvoiceFee)}
           accent
           onClick={() => navigate({ page: 'billing', billingTab: 'revenue' })}
         />
@@ -190,36 +222,109 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* ===== 第二行 ===== */}
-      <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {/* 今日待办 */}
-        <div className="card-pad">
-          <h2 className="mb-4 text-sm font-semibold text-text-main">今日待办</h2>
-          <div className="space-y-2">
-            {todayEvents.map((e) => (
-              <div key={e.id} className="flex items-center gap-2 rounded-btn px-2 py-1.5">
+      {/* ===== 第二行：今日待办（大面板） ===== */}
+      <div className="card-pad mb-5">
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <h2 className="text-sm font-semibold text-text-main">今日待办</h2>
+          <span className="rounded-full bg-primary-light/15 px-2 py-0.5 text-[11px] font-medium tabular-nums text-primary-light">
+            {todayEvents.length + todayTodos.length} 项
+          </span>
+          <div className="ml-auto flex min-w-[260px] flex-1 items-center gap-2 sm:max-w-sm">
+            <input
+              value={newTodo}
+              onChange={(e) => setNewTodo(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addTodo()}
+              placeholder="+ 添加今日待办，回车确认"
+              className="flex-1 rounded-btn border border-border bg-bg-card px-3 py-1.5 text-sm text-text-main outline-none transition focus:border-accent"
+            />
+            <button className="btn-primary btn-sm shrink-0" onClick={addTodo} disabled={!newTodo.trim()}>
+              <Plus size={13} /> 添加
+            </button>
+          </div>
+        </div>
+        <div className="max-h-[340px] space-y-1 overflow-y-auto pr-1">
+          {/* 自动归集的事件：今日 / 提前3天提醒生效期 / 还有3天到期 */}
+          {todayEvents.map((e) => {
+            const d = daysUntil(e.date)
+            return (
+              <div key={e.id} className="flex items-center gap-2.5 rounded-btn px-3 py-2 transition hover:bg-bg-warm">
                 <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
-                <span className="flex-1 text-sm text-text-main">{e.title}</span>
-                {e.time && <span className="text-xs tabular-nums text-text-muted">{e.time}</span>}
-              </div>
-            ))}
-            {todayTodos.map((t) => (
-              <div key={t.id} className="flex items-center gap-2 rounded-btn px-2 py-1.5 hover:bg-bg-warm">
                 <button
-                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border hover:border-accent"
+                  className="flex-1 truncate text-left text-sm text-text-main"
+                  onClick={() => (e.caseId ? navigate({ page: 'cases', caseId: e.caseId }) : navigate({ page: 'calendar' }))}
+                  title={e.title}
+                >
+                  {e.title}
+                </button>
+                {d > 0 ? (
+                  <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-accent">
+                    还有{d}天
+                  </span>
+                ) : (
+                  e.time && <span className="shrink-0 text-xs tabular-nums text-text-muted">{e.time}</span>
+                )}
+              </div>
+            )
+          })}
+          {/* 自由待办：可编辑 / 删除 / 勾选完成 */}
+          {todayTodos.map((t) =>
+            editingId === t.id ? (
+              <div key={t.id} className="flex items-center gap-2 rounded-btn bg-bg-warm px-3 py-2">
+                <input
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && saveEdit(t)}
+                  autoFocus
+                  className="flex-1 rounded-btn border border-accent bg-bg-card px-2 py-1 text-sm text-text-main outline-none"
+                />
+                <button className="btn-ghost btn-sm !px-2" onClick={() => saveEdit(t)} title="保存">
+                  <Check size={13} />
+                </button>
+                <button className="btn-ghost btn-sm !px-2" onClick={() => setEditingId(null)} title="取消">
+                  <X size={13} />
+                </button>
+              </div>
+            ) : (
+              <div key={t.id} className="group flex items-center gap-2.5 rounded-btn px-3 py-2 transition hover:bg-bg-warm">
+                <button
+                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border transition hover:border-accent"
                   onClick={() => db.todos.update(t.id!, { done: true, updatedAt: Date.now() })}
+                  title="标记完成"
                 >
                   <Check size={11} className="text-accent" />
                 </button>
-                <span className="flex-1 text-sm text-text-main">{t.text}</span>
+                <span className="flex-1 truncate text-sm text-text-main">{t.text}</span>
+                <button
+                  className="hidden shrink-0 text-text-muted transition hover:text-text-main group-hover:block"
+                  onClick={() => {
+                    setEditingId(t.id!)
+                    setEditText(t.text)
+                  }}
+                  title="编辑"
+                >
+                  <PencilSimple size={13} />
+                </button>
+                <button
+                  className="hidden shrink-0 text-text-muted transition hover:text-danger group-hover:block"
+                  onClick={() => deleteTodo(t)}
+                  title="删除"
+                >
+                  <Trash size={13} />
+                </button>
               </div>
-            ))}
-            {todayEvents.length === 0 && todayTodos.length === 0 && (
-              <p className="py-6 text-center text-sm text-text-muted">今日无事，专注办案。</p>
-            )}
-          </div>
+            ),
+          )}
+          {todayEvents.length === 0 && todayTodos.length === 0 && (
+            <div className="py-8 text-center">
+              <p className="text-sm text-text-muted">今日无事，专注办案。</p>
+              <p className="mt-1 text-xs text-text-muted">今天到期、提前3天提醒或还有3天到期的事件会自动出现在这里</p>
+            </div>
+          )}
         </div>
+      </div>
 
+      {/* ===== 第三行 ===== */}
+      <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* 案件概览 */}
         <div className="card-pad">
           <h2 className="mb-4 text-sm font-semibold text-text-main">在办案件概览</h2>
@@ -280,10 +385,8 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
-      </div>
 
-      {/* ===== 第三行：快捷入口 ===== */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        {/* 最近文档 */}
         <div className="card-pad">
           <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-text-main">
             <FolderOpen size={15} /> 最近文档
@@ -292,7 +395,7 @@ export default function Dashboard() {
             {recentDocs.map((d) => (
               <button
                 key={d.id}
-                onClick={() => navigate({ page: 'docs', docsTab: 'library' })}
+                onClick={() => navigate({ page: 'docs' })}
                 className="flex w-full items-center gap-2 rounded-btn px-2 py-2 transition hover:bg-bg-warm"
               >
                 <FileText size={15} className="shrink-0 text-primary-light" />
@@ -300,21 +403,23 @@ export default function Dashboard() {
                 <span className="shrink-0 text-xs text-text-muted">{fmtDate(d.updatedAt)}</span>
               </button>
             ))}
-            {(docs ?? []).length === 0 && <p className="text-sm text-text-muted">暂无文档，去模板中心创建文书</p>}
+            {(docs ?? []).length === 0 && <p className="text-sm text-text-muted">暂无文档，去案件详情上传案件材料</p>}
           </div>
         </div>
-        <div className="card-pad">
-          <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-text-main">
-            <Lightning size={15} /> 快捷操作
-          </h2>
-          <div className="grid grid-cols-2 gap-2">
-            <QuickBtn label="新建案件" onClick={() => navigate({ page: 'cases' })} />
-            <QuickBtn label="记录工时" onClick={() => navigate({ page: 'billing', billingTab: 'records' })} />
-            <QuickBtn label="添加日程" onClick={() => navigate({ page: 'calendar' })} />
-            <QuickBtn label="添加保全" onClick={() => navigate({ page: 'preservation' })} />
-            <QuickBtn label="新建常法" onClick={() => navigate({ page: 'retainers' })} />
-            <QuickBtn label="使用模板" onClick={() => navigate({ page: 'docs', docsTab: 'templates' })} />
-          </div>
+      </div>
+
+      {/* ===== 第四行：快捷操作（全宽） ===== */}
+      <div className="card-pad">
+        <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-text-main">
+          <Lightning size={15} /> 快捷操作
+        </h2>
+        <div className="grid grid-cols-3 gap-2 md:grid-cols-6">
+          <QuickBtn label="新建案件" onClick={() => navigate({ page: 'cases' })} />
+          <QuickBtn label="法律咨询" onClick={() => navigate({ page: 'consultation' })} />
+          <QuickBtn label="添加日程" onClick={() => navigate({ page: 'calendar' })} />
+          <QuickBtn label="添加保全" onClick={() => navigate({ page: 'preservation' })} />
+          <QuickBtn label="新建常法" onClick={() => navigate({ page: 'retainers' })} />
+          <QuickBtn label="上传文档" onClick={() => navigate({ page: 'docs' })} />
         </div>
       </div>
     </div>

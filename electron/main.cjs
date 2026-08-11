@@ -1,8 +1,19 @@
 const { app, BrowserWindow, shell } = require('electron')
 const path = require('path')
+const { classifyNavigation } = require('./navigation-policy.cjs')
 
 const isDev = !app.isPackaged
 const DEV_URL = process.env.VITE_DEV_URL || 'http://localhost:5173'
+
+const navigationOptions = {
+  isDev,
+  devUrl: DEV_URL,
+  distDir: path.resolve(__dirname, '../dist'),
+}
+
+function handleBlockedNavigation(url) {
+  if (classifyNavigation(url, navigationOptions) === 'external-web') void shell.openExternal(url)
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -33,10 +44,17 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  // 所有外部链接交给系统浏览器打开
+  // 新窗口默认拒绝；仅把明确的 HTTP(S) 外部链接交给系统浏览器。
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http')) shell.openExternal(url)
+    handleBlockedNavigation(url)
     return { action: 'deny' }
+  })
+
+  // 防止外部页面替换应用主窗口；允许的 Web 链接仍只在系统浏览器打开。
+  win.webContents.on('will-navigate', (event, url) => {
+    if (classifyNavigation(url, navigationOptions) === 'internal') return
+    event.preventDefault()
+    handleBlockedNavigation(url)
   })
 }
 

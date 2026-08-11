@@ -35,7 +35,10 @@ export function PreservationAlert() {
 
   if (!shouldShow) return null
 
-  const caseName = (id?: number) => cases?.find((c) => c.id === id)?.name ?? ''
+  const caseName = (id?: number) => {
+    if (!id) return '未关联案件'
+    return cases?.find((c) => c.id === id)?.name ?? ''
+  }
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">

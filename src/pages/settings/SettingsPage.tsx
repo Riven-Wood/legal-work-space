@@ -2,23 +2,35 @@ import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   UserCircle,
-  Clock,
   Database,
   Info,
   Upload,
   Download,
   Trash,
   Check,
-  ToggleLeft,
-  ToggleRight,
 } from '@phosphor-icons/react'
 import { db, getSettings } from '../../db/database'
-import type { Settings, BackupData } from '../../types'
-import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
+import type { Settings } from '../../types'
+import { Field, TextInput } from '../../components/ui/Field'
 import { ConfirmDialog } from '../../components/ui/Modal'
-import { downloadBlob } from '../../utils/format'
+import { downloadBlob, formatBytes } from '../../utils/format'
 import { fmtDateTime } from '../../utils/dates'
 import { useApp } from '../../store/AppContext'
+import {
+  BackupEncodingError,
+  BackupValidationError,
+  MAX_BACKUP_FILE_BYTES,
+  parseBackupJson,
+  stringifyBackup,
+} from '../../backup/backupCodec'
+import { clearApplicationData, exportDatabase, restoreDatabase } from '../../backup/backupService'
+import { APP_VERSION } from '../../utils/appVersion'
+
+type DataOperation = 'export' | 'import' | 'clear'
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 export default function SettingsPage() {
   const { bumpRefresh } = useApp()
@@ -27,6 +39,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [clearOpen, setClearOpen] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
+  const [dataOperation, setDataOperation] = useState<DataOperation | null>(null)
 
   useEffect(() => {
     if (settings && Object.keys(form).length === 0) setForm(settings)
@@ -43,79 +56,71 @@ export default function SettingsPage() {
   }
 
   const exportData = async () => {
-    const tables: Record<string, unknown[]> = {}
-    const names = [
-      'cases',
-      'clients',
-      'docs',
-      'templates',
-      'events',
-      'timeRecords',
-      'invoices',
-      'retainers',
-      'retainerWorks',
-      'retainerPayments',
-      'retainerReports',
-      'preservations',
-      'preservationRenewals',
-      'settings',
-      'todos',
-      'timelines',
-      'contactRecords',
-    ] as const
-    for (const name of names) {
-      const table = (db as unknown as Record<string, { toArray: () => Promise<unknown[]> }>)[name]
-      if (table) tables[name] = await table.toArray()
+    setDataOperation('export')
+    try {
+      const backup = await exportDatabase(db)
+      const json = stringifyBackup(backup)
+      const blob = new Blob([json], { type: 'application/json' })
+      if (blob.size > MAX_BACKUP_FILE_BYTES) {
+        throw new BackupEncodingError(
+          `备份生成后约 ${formatBytes(blob.size)}，超过 ${formatBytes(MAX_BACKUP_FILE_BYTES)} 的安全上限。请减少超大文件后重试。`,
+        )
+      }
+      downloadBlob(blob, `LegalWorkSpace备份_${fmtDateTime(backup.exportedAt).replace(/[.:\s]/g, '-')}.json`)
+      alert(`数据导出成功，已包含全部数据表及文档/票据原文件（${formatBytes(blob.size)}）。`)
+    } catch (error) {
+      console.error('数据导出失败', error)
+      alert(`导出失败：${errorMessage(error)}`)
+    } finally {
+      setDataOperation(null)
     }
-    const backup: BackupData = { exportedAt: Date.now(), tables }
-    downloadBlob(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }), `LegalWorkSpace备份_${fmtDateTime(Date.now()).replace(/[.:\s]/g, '-')}.json`)
   }
 
-  const doImport = (file: File) => {
-    const reader = new FileReader()
-    reader.onload = async () => {
-      try {
-        const data = JSON.parse(String(reader.result)) as BackupData
-        for (const [name, rows] of Object.entries(data.tables ?? {})) {
-          const table = (db as unknown as Record<string, { clear: () => Promise<void>; bulkAdd: (r: unknown[]) => Promise<unknown> }>)[name]
-          if (table && Array.isArray(rows)) {
-            await table.clear()
-            if (rows.length > 0) await table.bulkAdd(rows)
-          }
-        }
-        bumpRefresh()
-        alert('数据导入成功')
-      } catch {
-        alert('导入失败：文件格式不正确')
+  const doImport = async (file: File) => {
+    setImportFile(null)
+    setDataOperation('import')
+    try {
+      if (file.size > MAX_BACKUP_FILE_BYTES) {
+        throw new BackupValidationError(
+          `备份文件为 ${formatBytes(file.size)}，超过 ${formatBytes(MAX_BACKUP_FILE_BYTES)} 的安全上限，为避免内存耗尽已停止导入。`,
+        )
       }
+      const input = parseBackupJson(await file.text())
+      const result = await restoreDatabase(db, input)
+      bumpRefresh()
+
+      const lostFiles = result.warnings.filter((warning) => warning.code === 'legacy-blob-lost').length
+      const messages = ['数据导入完成，备份已以单个事务恢复。']
+      if (lostFiles > 0) {
+        messages.push(
+          `警告：该旧版备份中有 ${lostFiles} 个文件的原始内容在当时导出时已丢失，本次仅恢复元数据（文件名、大小等安全字段），这些文件无法下载或预览。`,
+        )
+      }
+      if (result.ignoredTables.length > 0) {
+        messages.push(`已安全忽略 ${result.ignoredTables.length} 个当前版本不识别的数据表。`)
+      }
+      alert(messages.join('\n\n'))
+    } catch (error) {
+      console.error('数据导入失败', error)
+      alert(`导入失败，当前数据未被更改：${errorMessage(error)}`)
+    } finally {
+      setDataOperation(null)
     }
-    reader.readAsText(file)
   }
 
   const clearAll = async () => {
-    const names = [
-      'cases',
-      'clients',
-      'docs',
-      'events',
-      'timeRecords',
-      'invoices',
-      'retainers',
-      'retainerWorks',
-      'retainerPayments',
-      'retainerReports',
-      'preservations',
-      'preservationRenewals',
-      'todos',
-      'timelines',
-      'contactRecords',
-    ] as const
-    for (const name of names) {
-      await (db as unknown as Record<string, { clear: () => Promise<void> }>)[name].clear()
-    }
-    await db.templates.clear()
     setClearOpen(false)
-    bumpRefresh()
+    setDataOperation('clear')
+    try {
+      await clearApplicationData(db)
+      bumpRefresh()
+      alert('全部业务数据已清空，律所/律师设置已保留。')
+    } catch (error) {
+      console.error('清空业务数据失败', error)
+      alert(`清空失败，事务已回滚，当前数据未被更改：${errorMessage(error)}`)
+    } finally {
+      setDataOperation(null)
+    }
   }
 
   return (
@@ -149,53 +154,33 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* 费率 */}
-      <div className="card-pad mb-5">
-        <h2 className="mb-4 flex items-center gap-1.5 text-sm font-semibold text-text-main">
-          <Clock size={16} /> 计费设置
-        </h2>
-        <div className="space-y-4">
-          <Field label="默认小时费率（元/小时）" hint="账单生成时自动计算律师费">
-            <TextInput
-              type="number"
-              value={form.hourlyRate ?? 800}
-              onChange={(e) => set('hourlyRate', Number(e.target.value))}
-              className="!w-48"
-            />
-          </Field>
-          <button
-            onClick={() => set('includeRetainerHours', !(form.includeRetainerHours ?? true))}
-            className="flex w-full items-center justify-between rounded-btn border border-border px-4 py-3 text-left"
-          >
-            <div>
-              <p className="text-sm font-medium text-text-main">常法工时纳入计费统计</p>
-              <p className="text-xs text-text-muted">开启后，常法客户工作记录时长计入计时计费模块的工时统计</p>
-            </div>
-            {form.includeRetainerHours !== false ? (
-              <ToggleRight size={28} className="shrink-0 text-accent" />
-            ) : (
-              <ToggleLeft size={28} className="shrink-0 text-text-muted" />
-            )}
-          </button>
-        </div>
-      </div>
-
       {/* 数据管理 */}
       <div className="card-pad mb-5">
         <h2 className="mb-4 flex items-center gap-1.5 text-sm font-semibold text-text-main">
           <Database size={16} /> 数据管理
         </h2>
-        <p className="mb-4 text-xs text-text-muted">所有数据保存在浏览器本地（IndexedDB），隐私优先，不上传任何服务器。</p>
+        <p className="mb-2 text-xs text-text-muted">所有数据保存在浏览器本地（IndexedDB），隐私优先，不上传任何服务器。</p>
+        <p className="mb-4 text-xs text-text-muted">备份包含文档和票据原文件；文件较大时导出/导入可能耗时并占用较多内存。</p>
         <div className="flex flex-wrap gap-3">
-          <button className="btn-primary btn-sm" onClick={exportData}>
-            <Download size={14} /> 导出全部数据（JSON 备份）
+          <button className="btn-primary btn-sm" onClick={exportData} disabled={dataOperation !== null}>
+            <Download size={14} /> {dataOperation === 'export' ? '正在导出…' : '导出全部数据（JSON 备份）'}
           </button>
-          <label className="btn-ghost btn-sm cursor-pointer">
-            <Upload size={14} /> 导入数据（JSON 恢复）
-            <input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files?.[0] && setImportFile(e.target.files[0])} />
+          <label className={`btn-ghost btn-sm cursor-pointer ${dataOperation !== null ? 'pointer-events-none opacity-50' : ''}`}>
+            <Upload size={14} /> {dataOperation === 'import' ? '正在导入…' : '导入数据（JSON 恢复）'}
+            <input
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              disabled={dataOperation !== null}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                if (file) setImportFile(file)
+                event.currentTarget.value = ''
+              }}
+            />
           </label>
-          <button className="btn-danger btn-sm" onClick={() => setClearOpen(true)}>
-            <Trash size={14} /> 清空所有数据
+          <button className="btn-danger btn-sm" onClick={() => setClearOpen(true)} disabled={dataOperation !== null}>
+            <Trash size={14} /> {dataOperation === 'clear' ? '正在清空…' : '清空全部业务数据'}
           </button>
         </div>
       </div>
@@ -206,7 +191,7 @@ export default function SettingsPage() {
           <Info size={16} /> 关于
         </h2>
         <p className="text-sm text-text-muted">
-          Legal Work Space v{form.version ?? '1.0.0'} · 律师工作台 · 纯前端本地存储
+          Legal Work Space v{APP_VERSION} · 律师工作台 · 纯前端本地存储
         </p>
       </div>
 
@@ -226,14 +211,13 @@ export default function SettingsPage() {
         onCancel={() => setImportFile(null)}
         onConfirm={() => {
           if (importFile) doImport(importFile)
-          setImportFile(null)
         }}
       />
 
       <ConfirmDialog
         open={clearOpen}
-        title="清空所有数据"
-        message="此操作将删除全部案件、客户、文档、日程等数据，且不可恢复！建议先导出备份。确定继续吗？"
+        title="清空全部业务数据"
+        message="此操作将删除全部案件、客户、文档、发票/票据、法律咨询、日程等业务数据，但会保留当前律所/律师设置。业务数据不可恢复，建议先导出备份。确定继续吗？"
         confirmText="确认清空"
         danger
         onCancel={() => setClearOpen(false)}

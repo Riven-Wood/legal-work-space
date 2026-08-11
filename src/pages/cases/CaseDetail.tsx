@@ -5,16 +5,9 @@ import {
   PencilSimple,
   DotsThree,
   Plus,
-  Clock,
   Check,
-  Paperclip,
   FileText,
-  Image as ImageIcon,
-  Download,
   X,
-  Eye,
-  FilePdf,
-  Upload,
   PaperPlaneTilt,
   Stamp,
   Files,
@@ -27,18 +20,24 @@ import {
   Handshake,
   Trash,
   CheckCircle,
+  Clock,
 } from '@phosphor-icons/react'
 import { db } from '../../db/database'
 import { useApp } from '../../store/AppContext'
-import type { LawCase, Client, DocFile, Todo, CalendarEvent, CaseTimeline, Retainer } from '../../types'
+import type { LawCase, Client, DocFile, Todo, CalendarEvent, CaseTimeline, Retainer, EventType, LegalConsultation } from '../../types'
 import { CASE_STAGES, type CaseStage, type TimelineType } from '../../types'
 import { fmtDate, fmtDateTime, fmtDateInput, daysUntil, fmtMoney, fmtHours } from '../../utils/dates'
 import { formatBytes, downloadBlob } from '../../utils/format'
+import { calculateAppealDeadline, updateCaseStage, type AppealDocumentType } from '../../utils/legalDeadlines'
 import { Tag } from '../../components/ui/Tag'
 import { Modal, ConfirmDialog } from '../../components/ui/Modal'
 import { Field, TextInput, TextArea, Select } from '../../components/ui/Field'
 import { CaseForm } from './CaseForm'
 import { PreservationCard } from '../../components/preservation/PreservationCard'
+import { CaseDocs } from '../../components/case/CaseDocs'
+import { summarizeCaseConsultations } from '../../utils/caseConsultations'
+import { printHtmlDocument } from '../../utils/browserPrint'
+import { buildCasePrintDocument } from '../../utils/printDocuments'
 
 const TIMELINE_TYPES: { key: TimelineType; label: string }[] = [
   { key: 'filing', label: '提交起诉状' },
@@ -62,12 +61,23 @@ const TIMELINE_ICONS: Record<TimelineType, React.ElementType> = {
   other: Circle,
 }
 
-const DOC_CATS: { key: string; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'filing', label: '起诉材料' },
-  { key: 'evidence', label: '证据材料' },
-  { key: 'judgment', label: '裁判文书' },
+// 关键日期（日历事件）类型选项
+const EVENT_TYPE_OPTIONS: { key: EventType; label: string }[] = [
+  { key: 'hearing', label: '开庭' },
+  { key: 'meeting', label: '会见' },
+  { key: 'evidence-deadline', label: '举证截止' },
+  { key: 'appeal-deadline', label: '上诉截止' },
+  { key: 'enforcement-deadline', label: '申请执行截止' },
+  { key: 'preservation-expiry', label: '保全到期' },
   { key: 'other', label: '其他' },
+]
+
+const REMINDER_OPTIONS: { key: CalendarEvent['reminder']; label: string }[] = [
+  { key: 'none', label: '不提醒' },
+  { key: 'same-day', label: '当天' },
+  { key: '1d', label: '提前1天' },
+  { key: '3d', label: '提前3天' },
+  { key: '7d', label: '提前7天' },
 ]
 
 export default function CaseDetail() {
@@ -95,18 +105,18 @@ export default function CaseDetail() {
     () => db.events.where('caseId').equals(caseId).and((e) => !e.deleted).toArray(),
     [caseId],
   ) as CalendarEvent[] | undefined
-  const times = useLiveQuery(
-    () => db.timeRecords.where('caseId').equals(caseId).and((t) => !t.deleted).toArray(),
+  const consultations = useLiveQuery(
+    () => db.legalConsultations.where('caseId').equals(caseId).and((record) => !record.deleted).toArray(),
     [caseId],
-  ) as (import('../../types').TimeRecord)[] | undefined
+  ) as LegalConsultation[] | undefined
 
   const [editOpen, setEditOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [tlOpen, setTlOpen] = useState(false)
-  const [docCat, setDocCat] = useState('all')
-  const [dragging, setDragging] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [previewDoc, setPreviewDoc] = useState<DocFile | null>(null)
+  const [addEvOpen, setAddEvOpen] = useState(false)
+  const [editEv, setEditEv] = useState<CalendarEvent | null>(null)
+  const [confirmDelEv, setConfirmDelEv] = useState<CalendarEvent | null>(null)
 
   // 常法顾问标记：客户是否有常法顾问合同
   const retainer = useLiveQuery(
@@ -120,52 +130,14 @@ export default function CaseDetail() {
   const stageIdx = lawCase ? CASE_STAGES.indexOf(lawCase.stage) : -1
   const sortedTls = useMemo(() => [...(timelines ?? [])].sort((a, b) => b.date - a.date), [timelines])
   const activeTodos = todos?.filter((t) => !t.done) ?? []
-  const totalMinutes = times?.reduce((s, t) => s + t.minutes, 0) ?? 0
+  const consultationSummary = summarizeCaseConsultations(consultations ?? [], caseId)
   const totalFee = lawCase?.fee ?? 0
 
   if (!lawCase) return <div className="p-10 text-center text-text-muted">案件不存在或已删除</div>
 
   // 阶段推进/回退
   const setStage = async (s: CaseStage) => {
-    await db.cases.update(caseId, { stage: s, updatedAt: Date.now() })
-    // 立案 → 自动生成举证期限
-    if (s === '立案') {
-      const hasEvidence = await db.events
-        .where('caseId').equals(caseId)
-        .and((e) => e.type === 'evidence-deadline' && !e.deleted)
-        .count()
-      if (!hasEvidence) {
-        await db.events.add({
-          title: '举证期限截止',
-          date: new Date(new Date().setDate(new Date().getDate() + 30)).getTime(),
-          allDay: true,
-          type: 'evidence-deadline',
-          caseId,
-          reminder: '7d',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        })
-      }
-    }
-    // 收到判决 → 自动生成上诉截止日
-    if (s === '等待判决') {
-      const hasAppeal = await db.events
-        .where('caseId').equals(caseId)
-        .and((e) => e.type === 'appeal-deadline' && !e.deleted)
-        .count()
-      if (!hasAppeal) {
-        await db.events.add({
-          title: '上诉截止日',
-          date: new Date(new Date().setDate(new Date().getDate() + 15)).getTime(),
-          allDay: true,
-          type: 'appeal-deadline',
-          caseId,
-          reminder: '7d',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        })
-      }
-    }
+    await updateCaseStage(caseId, s)
   }
 
   const archiveCase = async () => {
@@ -183,7 +155,7 @@ export default function CaseDetail() {
       docs: docs ?? [],
       todos: todos ?? [],
       events: events ?? [],
-      timeRecords: times ?? [],
+      legalConsultations: consultations ?? [],
       retainers: retainer ?? [],
     }
     downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `案件导出_${lawCase.name}_${fmtDate(Date.now())}.json`)
@@ -191,45 +163,25 @@ export default function CaseDetail() {
   }
 
   const printCase = () => {
-    const win = window.open('', '_blank')
-    if (!win) return
-    const tlRows = sortedTls
-      .map((t) => `<tr><td>${fmtDate(t.date)}</td><td>${TIMELINE_TYPES.find((x) => x.key === t.type)?.label ?? t.type}</td><td>${t.title}</td><td>${t.note ?? ''}</td></tr>`)
-      .join('')
-    const evRows = (events ?? [])
-      .map((e) => `<tr><td>${fmtDate(e.date)}</td><td>${e.title}</td><td>${e.caseId ? '' : ''}${daysUntil(e.date) < 0 ? `已逾期${-daysUntil(e.date)}天` : daysUntil(e.date) === 0 ? '今天' : `还有${daysUntil(e.date)}天`}</td></tr>`)
-      .join('')
-    win.document.write(`<html><head><title>${lawCase.name}</title><style>
-      body{font-family:'PingFang SC','SimSun';font-size:13px;color:#3a3a3a;padding:48px;line-height:1.8}
-      h1{text-align:center;font-size:22px;color:#5b6e7a}
-      h2{color:#5b6e7a;font-size:15px;border-left:4px solid #5b6e7a;padding-left:10px;margin:24px 0 10px}
-      table{width:100%;border-collapse:collapse;margin:10px 0}
-      th,td{border:1px solid #e5e3de;padding:7px 10px;text-align:left}
-      th{background:#ebe9e4}
-      .kv{display:flex;justify-content:space-between;padding:2px 0}
-    </style></head><body>
-      <h1>${lawCase.name}</h1>
-      <p style="text-align:center">案号：${lawCase.caseNo || '—'}　案由：${lawCase.cause}　阶段：${lawCase.stage}</p>
-      <h2>基本信息</h2>
-      <div class="kv"><span>客户</span><span>${lawCase.clientName || '—'}</span></div>
-      <div class="kv"><span>对方当事人</span><span>${lawCase.counterparty || '—'}</span></div>
-      <div class="kv"><span>受理法院</span><span>${lawCase.court || '—'}</span></div>
-      <div class="kv"><span>收案日期</span><span>${fmtDate(lawCase.filedDate)}</span></div>
-      <div class="kv"><span>律师费</span><span>${fmtMoney(lawCase.fee)}</span></div>
-      <div class="kv"><span>风险等级</span><span>${lawCase.risk === 'high' ? '高' : lawCase.risk === 'low' ? '低' : '中'}</span></div>
-      <h2>案件时间线</h2>
-      <table><tr><th>日期</th><th>类型</th><th>标题</th><th>备注</th></tr>${tlRows || '<tr><td colspan="4">无记录</td></tr>'}</table>
-      <h2>关键日期</h2>
-      <table><tr><th>日期</th><th>事项</th><th>倒计时</th></tr>${evRows || '<tr><td colspan="3">无记录</td></tr>'}</table>
-      <h2>文档清单</h2>
-      <table><tr><th>文件名</th><th>上传日期</th><th>大小</th></tr>${(docs ?? []).map((d) => `<tr><td>${d.name}</td><td>${fmtDate(d.createdAt)}</td><td>${formatBytes(d.size)}</td></tr>`).join('') || '<tr><td colspan="3">无文档</td></tr>'}</table>
-      <h2>工时汇总</h2>
-      <p>累计 ${fmtHours(totalMinutes)}，共 ${times?.length ?? 0} 条记录</p>
-      <p style="margin-top:60px;text-align:right">导出日期：${fmtDateTime(Date.now())}</p>
-    </body></html>`)
-    win.document.close()
-    win.focus()
-    setTimeout(() => win.print(), 300)
+    const countdown = (date: number) => daysUntil(date) < 0 ? `已逾期${-daysUntil(date)}天` : daysUntil(date) === 0 ? '今天' : `还有${daysUntil(date)}天`
+    const html = buildCasePrintDocument({
+      title: lawCase.name,
+      caseNo: lawCase.caseNo || '—',
+      cause: lawCase.cause,
+      stage: lawCase.stage,
+      clientName: lawCase.clientName || '—',
+      counterparty: lawCase.counterparty || '—',
+      court: lawCase.court || '—',
+      filedDate: fmtDate(lawCase.filedDate),
+      fee: fmtMoney(lawCase.fee),
+      risk: lawCase.risk === 'high' ? '高' : lawCase.risk === 'low' ? '低' : '中',
+      timelines: sortedTls.map((t) => ({ date: fmtDate(t.date), type: TIMELINE_TYPES.find((x) => x.key === t.type)?.label ?? t.type, title: t.title, note: t.note ?? '' })),
+      events: (events ?? []).map((event) => ({ date: fmtDate(event.date), title: event.title, countdown: countdown(event.date) })),
+      documents: (docs ?? []).map((doc) => ({ name: doc.name, createdAt: fmtDate(doc.createdAt), size: formatBytes(doc.size) })),
+      hoursSummary: `累计 ${fmtHours(consultationSummary.totalMinutes)}，共 ${consultationSummary.count} 条咨询记录`,
+      exportedAt: fmtDateTime(Date.now()),
+    })
+    void printHtmlDocument(html).catch((error) => window.alert(error instanceof Error ? `打印失败：${error.message}` : '打印失败，请重试'))
     setMoreOpen(false)
   }
 
@@ -246,34 +198,6 @@ export default function CaseDetail() {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     })
-  }
-
-  // 文件上传
-  const handleFiles = async (files: FileList | File[]) => {
-    for (const f of Array.from(files)) {
-      const ext = f.name.split('.').pop()?.toLowerCase() ?? ''
-      const isImg = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)
-      const isPdf = ext === 'pdf'
-      let category: DocFile['category'] = 'other'
-      if (isImg || isPdf) category = 'evidence'
-      await db.docs.add({
-        name: f.name,
-        type: 'other',
-        category,
-        caseId,
-        size: f.size,
-        mime: f.type,
-        data: f,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      })
-    }
-  }
-
-  const downloadDoc = async (doc: DocFile) => {
-    if (doc.data) {
-      downloadBlob(doc.data, doc.name)
-    }
   }
 
   return (
@@ -432,72 +356,9 @@ export default function CaseDetail() {
             </div>
           </div>
 
-          {/* 文档区 */}
+          {/* 案件材料（分区 + 版本管理） */}
           <div className="card-pad">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-text-main">文档区</h2>
-              <span className="text-xs text-text-muted">{docs?.length ?? 0} 份文件</span>
-            </div>
-            <div className="mb-3 flex gap-1.5">
-              {DOC_CATS.map((c) => (
-                <button
-                  key={c.key}
-                  onClick={() => setDocCat(c.key)}
-                  className={`chip ${docCat === c.key ? '!bg-primary !text-white' : ''}`}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-            <div
-              onDragOver={(e) => {
-                e.preventDefault()
-                setDragging(true)
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault()
-                setDragging(false)
-                handleFiles(e.dataTransfer.files)
-              }}
-              className={`rounded-btn border-2 border-dashed p-4 text-center text-xs transition ${
-                dragging ? 'border-accent bg-bg-warm' : 'border-border text-text-muted'
-              }`}
-            >
-              <Paperclip size={16} className="mx-auto mb-1" />
-              拖拽文件到此处上传，或
-              <label className="cursor-pointer text-accent hover:underline">
-                选择文件
-                <input
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => e.target.files && handleFiles(e.target.files)}
-                />
-              </label>
-            </div>
-            <div className="mt-3 space-y-1">
-              {(docs ?? [])
-                .filter((d) => docCat === 'all' || d.category === docCat)
-                .map((d) => (
-                  <div key={d.id} className="flex items-center gap-3 rounded-btn px-2 py-2 transition hover:bg-bg-warm">
-                    {isImage(d.name) ? <ImageIcon size={16} className="text-primary-light" /> : <FileText size={16} className="text-primary-light" />}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-text-main">{d.name}</p>
-                      <p className="text-xs text-text-muted">
-                        {fmtDate(d.createdAt)} · {formatBytes(d.size)}
-                      </p>
-                    </div>
-                    <button className="btn-ghost btn-sm" onClick={() => setPreviewDoc(d)}>
-                      <Eye size={13} /> 预览
-                    </button>
-                    <button className="btn-ghost btn-sm" onClick={() => downloadDoc(d)}>
-                      <Download size={13} /> 下载
-                    </button>
-                  </div>
-                ))}
-              {(docs ?? []).length === 0 && <p className="py-3 text-center text-sm text-text-muted">暂无文档</p>}
-            </div>
+            <CaseDocs caseId={caseId} />
           </div>
         </div>
 
@@ -505,16 +366,47 @@ export default function CaseDetail() {
         <div className="space-y-5">
           <PreservationCard caseId={caseId} />
 
+          {/* 法律咨询：与咨询中心、全局计时器使用同一数据源 */}
+          <div className="card-pad">
+            <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-text-main">
+              <Clock size={15} /> 法律咨询
+            </h2>
+            <div className="mb-3 flex items-center justify-between text-sm">
+              <span className="text-text-muted">累计时长</span>
+              <span className="font-medium tabular-nums text-text-main">{fmtHours(consultationSummary.totalMinutes)}</span>
+            </div>
+            <div className="space-y-2">
+              {[...(consultations ?? [])]
+                .sort((a, b) => b.date - a.date)
+                .slice(0, 5)
+                .map((record) => (
+                  <div key={record.id} className="rounded-btn bg-bg-warm px-3 py-2 text-xs">
+                    <div className="flex justify-between gap-3 text-text-main">
+                      <span className="truncate">{record.content}</span>
+                      <span className="shrink-0 tabular-nums">{record.minutes} 分钟</span>
+                    </div>
+                    <p className="mt-0.5 text-text-muted">{fmtDate(record.date)}{record.consultant ? ` · ${record.consultant}` : ''}</p>
+                  </div>
+                ))}
+              {consultationSummary.count === 0 && <p className="text-sm text-text-muted">暂无咨询记录</p>}
+            </div>
+          </div>
+
           {/* 关键日期 */}
           <div className="card-pad">
-            <h2 className="mb-3 text-sm font-semibold text-text-main">关键日期</h2>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-text-main">关键日期</h2>
+              <button className="btn-ghost btn-sm" onClick={() => setAddEvOpen(true)}>
+                <Plus size={13} /> 添加
+              </button>
+            </div>
             <div className="space-y-2">
               {(events ?? []).map((ev) => {
                 const d = daysUntil(ev.date)
                 return (
                   <div
                     key={ev.id}
-                    className={`flex items-center justify-between rounded-btn px-3 py-2 ${
+                    className={`group flex items-center gap-2 rounded-btn px-3 py-2 ${
                       d < 0
                         ? 'bg-danger text-white'
                         : d <= 3
@@ -524,13 +416,27 @@ export default function CaseDetail() {
                             : 'bg-bg-warm text-text-main'
                     }`}
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="truncate text-sm">{ev.title}</p>
                       <p className="text-xs opacity-80">{fmtDate(ev.date)}</p>
                     </div>
                     <span className="shrink-0 text-xs font-medium tabular-nums">
                       {d < 0 ? `已逾期${-d}天` : d === 0 ? '今天' : `还有${d}天`}
                     </span>
+                    <button
+                      className="shrink-0 rounded p-0.5 opacity-0 transition group-hover:opacity-100 hover:bg-black/10"
+                      onClick={() => setEditEv(ev)}
+                      title="编辑关键日期"
+                    >
+                      <PencilSimple size={13} />
+                    </button>
+                    <button
+                      className="shrink-0 rounded p-0.5 opacity-0 transition group-hover:opacity-100 hover:bg-black/10"
+                      onClick={() => setConfirmDelEv(ev)}
+                      title="删除关键日期"
+                    >
+                      <Trash size={13} />
+                    </button>
                   </div>
                 )
               })}
@@ -538,27 +444,17 @@ export default function CaseDetail() {
             </div>
           </div>
 
-          {/* 工时费用 */}
+          {/* 费用 */}
           <div className="card-pad">
             <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-text-main">
-              <Clock size={15} /> 工时与费用
+              <HandCoins size={15} /> 本案费用
             </h2>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-text-muted">累计工时</span>
-                <span className="font-medium tabular-nums text-text-main">{fmtHours(totalMinutes)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">本案律师费</span>
+                <span className="text-text-muted">律师费</span>
                 <span className="font-medium tabular-nums text-accent">{fmtMoney(totalFee)}</span>
               </div>
             </div>
-            <button
-              className="mt-3 w-full text-center text-xs text-primary hover:underline"
-              onClick={() => navigate({ page: 'billing', billingTab: 'records' })}
-            >
-              查看完整工时记录 →
-            </button>
           </div>
 
           {/* 待办 */}
@@ -608,8 +504,23 @@ export default function CaseDetail() {
         }}
       />
 
-      {/* 文档预览 */}
-      {previewDoc && <DocPreview doc={previewDoc} onClose={() => setPreviewDoc(null)} />}
+      {/* 关键日期：新增/编辑/删除 */}
+      {addEvOpen && <EventModal key="new" caseId={caseId} onClose={() => setAddEvOpen(false)} />}
+      {editEv && <EventModal key={`edit-${editEv.id}`} caseId={caseId} ev={editEv} onClose={() => setEditEv(null)} />}
+      {confirmDelEv && (
+        <ConfirmDialog
+          open
+          title="删除关键日期"
+          message={`确定删除「${confirmDelEv.title}」吗？日历中的对应日程也会一并移除。`}
+          confirmText="删除"
+          danger
+          onCancel={() => setConfirmDelEv(null)}
+          onConfirm={() => {
+            db.events.update(confirmDelEv.id!, { deleted: Date.now(), updatedAt: Date.now() })
+            setConfirmDelEv(null)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -633,10 +544,6 @@ function isCurrentMonth(ts: number) {
   const now = new Date()
   const d = new Date(ts)
   return now.getFullYear() === d.getFullYear() && now.getMonth() === d.getMonth()
-}
-
-function isImage(name: string) {
-  return /\.(png|jpe?g|gif|webp)$/i.test(name)
 }
 
 function QuickTodo({ onAdd }: { onAdd: (text: string) => void }) {
@@ -676,25 +583,6 @@ function TimelineModal({ open, onClose, caseId }: { open: boolean; onClose: () =
       createdAt: Date.now(),
       updatedAt: Date.now(),
     })
-    // 收到判决 → 自动生成上诉截止日（+15天）
-    if (type === 'judgment') {
-      const hasAppeal = await db.events
-        .where('caseId').equals(caseId)
-        .and((e) => e.type === 'appeal-deadline' && !e.deleted)
-        .count()
-      if (!hasAppeal) {
-        await db.events.add({
-          title: '上诉截止日',
-          date: new Date(new Date(date).setDate(new Date(date).getDate() + 15)).getTime(),
-          allDay: true,
-          type: 'appeal-deadline',
-          caseId,
-          reminder: '7d',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        })
-      }
-    }
     onClose()
     setTitle('')
     setNote('')
@@ -741,51 +629,142 @@ function TimelineModal({ open, onClose, caseId }: { open: boolean; onClose: () =
   )
 }
 
-// ===== 文档预览弹窗（PDF/图片内联预览，Word 提示下载） =====
-function DocPreview({ doc, onClose }: { doc: DocFile; onClose: () => void }) {
-  const [url, setUrl] = useState<string | null>(null)
-  const isPdf = (doc.name || '').toLowerCase().endsWith('.pdf')
-  const isImg = /\.(png|jpe?g|gif|webp)$/i.test(doc.name || '')
+// ========== 关键日期：新增 / 编辑弹窗（与日历事件同源，编辑同步到日历） ==========
+function EventModal({
+  caseId,
+  ev,
+  onClose,
+}: {
+  caseId: number
+  ev?: CalendarEvent | null
+  onClose: () => void
+}) {
+  const isEdit = !!ev?.id
+  const [title, setTitle] = useState(ev?.title ?? '')
+  const [date, setDate] = useState(ev ? fmtDateInput(ev.date) : fmtDateInput())
+  const [type, setType] = useState<EventType>(ev?.type ?? 'other')
+  const [reminder, setReminder] = useState<CalendarEvent['reminder']>(ev?.reminder ?? 'none')
+  const [note, setNote] = useState(ev?.note ?? '')
+  const [appealDocumentType, setAppealDocumentType] = useState<AppealDocumentType | ''>('')
+  const [servedDate, setServedDate] = useState('')
 
-  useEffect(() => {
-    if (!doc.data) return
-    const u = URL.createObjectURL(doc.data)
-    setUrl(u)
-    return () => URL.revokeObjectURL(u)
-  }, [doc])
+  const calculateAppealDate = () => {
+    const calculated = calculateAppealDeadline({
+      documentType: appealDocumentType || undefined,
+      servedDate,
+    })
+    if (calculated) setDate(calculated)
+  }
 
-  const isWord = /\.(docx?|wps)$/i.test(doc.name || '')
+  const save = async () => {
+    if (!title.trim() || !date) return
+    const dateTs = new Date(`${date}T09:00`).getTime()
+    if (isEdit) {
+      await db.events.update(ev.id!, {
+        title: title.trim(),
+        date: dateTs,
+        type,
+        reminder,
+        note: note.trim() || undefined,
+        updatedAt: Date.now(),
+      })
+    } else {
+      await db.events.add({
+        title: title.trim(),
+        date: dateTs,
+        allDay: true,
+        type,
+        caseId,
+        reminder,
+        note: note.trim() || undefined,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+    }
+    onClose()
+  }
 
   return (
-    <Modal open onClose={onClose} title={doc.name} width={760} footer={
-      <>
-        <button className="btn-ghost" onClick={onClose}>关闭</button>
-        <button className="btn-primary" onClick={() => doc.data && downloadBlob(doc.data, doc.name)}>
-          <Download size={14} /> 下载
-        </button>
-      </>
-    }>
-      <div className="min-h-[420px]">
-        {isPdf && url && (
-          <iframe src={url} className="h-[560px] w-full rounded-btn border border-border" title="PDF 预览" />
-        )}
-        {isImg && url && <img src={url} alt={doc.name} className="mx-auto max-h-[560px] max-w-full rounded-btn" />}
-        {isWord && (
-          <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
-            <FileText size={40} className="text-primary-light" />
-            <p className="text-sm text-text-main">Word 文档不支持在线预览</p>
-            <p className="text-xs text-text-muted">请下载后使用本地软件打开</p>
+    <Modal
+      open
+      onClose={onClose}
+      title={isEdit ? '编辑关键日期' : '添加关键日期'}
+      width={480}
+      footer={
+        <>
+          <button className="btn-ghost" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn-primary" onClick={save} disabled={!title.trim() || !date}>
+            保存
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="事项标题" required>
+          <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="如：举证期限截止、开庭" />
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="日期" required>
+            <TextInput type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </Field>
+          <Field label="类型">
+            <Select value={type} onChange={(e) => setType(e.target.value as EventType)}>
+              {EVENT_TYPE_OPTIONS.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className="col-span-2">
+            <Field label="提醒设置">
+              <Select value={reminder} onChange={(e) => setReminder(e.target.value as CalendarEvent['reminder'])}>
+                {REMINDER_OPTIONS.map((r) => (
+                  <option key={r.key} value={r.key}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
+        </div>
+        {type === 'evidence-deadline' && (
+          <p className="rounded-btn bg-bg-warm px-3 py-2 text-xs leading-relaxed text-text-muted">
+            请按法院举证通知书载明的实际截止日录入，并在备注中写明通知书或其他来源。法院指定期间的法定范围不等于本案实际截止日。
+          </p>
         )}
-        {!isPdf && !isImg && !isWord && (
-          <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
-            <FileText size={40} className="text-primary-light" />
-            <p className="text-sm text-text-main">该文件类型不支持在线预览</p>
-            <button className="btn-primary btn-sm" onClick={() => doc.data && downloadBlob(doc.data, doc.name)}>
-              <Download size={13} /> 下载查看
+        {type === 'appeal-deadline' && (
+          <div className="rounded-btn bg-bg-warm p-3">
+            <p className="mb-3 text-xs leading-relaxed text-text-muted">
+              仅为计算辅助，以法院送达和法定规则为准；节假日顺延、送达方式、涉外情形等需另行核对。
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="文书类型" required>
+                <Select value={appealDocumentType} onChange={(e) => setAppealDocumentType(e.target.value as AppealDocumentType | '')}>
+                  <option value="">请选择</option>
+                  <option value="judgment">一审判决书</option>
+                  <option value="ruling">可上诉的一审裁定书</option>
+                </Select>
+              </Field>
+              <Field label="实际送达日期" required>
+                <TextInput type="date" value={servedDate} onChange={(e) => setServedDate(e.target.value)} />
+              </Field>
+            </div>
+            <button
+              type="button"
+              className="btn-ghost btn-sm mt-3"
+              disabled={!appealDocumentType || !servedDate}
+              onClick={calculateAppealDate}
+            >
+              填入辅助计算日期
             </button>
           </div>
         )}
+        <Field label="备注">
+          <TextArea value={note} onChange={(e) => setNote(e.target.value)} placeholder="请注明法院通知书、送达凭证等日期来源" />
+        </Field>
       </div>
     </Modal>
   )

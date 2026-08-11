@@ -6,7 +6,8 @@ import {
   Handshake,
   FolderOpen,
   CalendarBlank,
-  Clock,
+  Chats,
+  Receipt,
   ShieldWarning,
   GearSix,
   Sidebar as SidebarIcon,
@@ -19,9 +20,10 @@ const MENU: { key: PageKey; label: string; icon: React.ElementType }[] = [
   { key: 'cases', label: '案件管理', icon: Briefcase },
   { key: 'clients', label: '客户管理', icon: UsersThree },
   { key: 'retainers', label: '常法客户', icon: Handshake },
-  { key: 'docs', label: '文档模板', icon: FolderOpen },
+  { key: 'docs', label: '文档管理', icon: FolderOpen },
   { key: 'calendar', label: '日历日程', icon: CalendarBlank },
-  { key: 'billing', label: '计时计费', icon: Clock },
+  { key: 'consultation', label: '法律咨询', icon: Chats },
+  { key: 'billing', label: '账单管理', icon: Receipt },
   { key: 'preservation', label: '保全提醒', icon: ShieldWarning },
 ]
 

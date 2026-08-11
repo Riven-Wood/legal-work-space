@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MagnifyingGlass, Briefcase, UsersThree, Handshake, FolderOpen, FileText, Clock } from '@phosphor-icons/react'
+import { MagnifyingGlass, Briefcase, UsersThree, Handshake, FolderOpen, Chats } from '@phosphor-icons/react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useApp } from '../../store/AppContext'
 import { db } from '../../db/database'
-import type { LawCase, Client, Retainer, DocFile, DocTemplate, TimeRecord, RetainerWork } from '../../types'
+import type { LawCase, Client, Retainer, DocFile, LegalConsultation, RetainerWork } from '../../types'
 
 interface Group {
   label: string
@@ -19,11 +19,8 @@ export function GlobalSearch() {
   const clients = useLiveQuery(() => db.clients.where('deleted').equals(0).toArray(), []) as Client[] | undefined
   const retainers = useLiveQuery(() => db.retainers.where('deleted').equals(0).toArray(), []) as Retainer[] | undefined
   const docs = useLiveQuery(() => db.docs.where('deleted').equals(0).toArray(), []) as DocFile[] | undefined
-  const templates = useLiveQuery(() => db.templates.where('deleted').equals(0).toArray(), []) as
-    | DocTemplate[]
-    | undefined
-  const timeRecords = useLiveQuery(() => db.timeRecords.where('deleted').equals(0).toArray(), []) as
-    | TimeRecord[]
+  const consults = useLiveQuery(() => db.legalConsultations.where('deleted').equals(0).toArray(), []) as
+    | LegalConsultation[]
     | undefined
   const retainerWorks = useLiveQuery(() => db.retainerWorks.where('deleted').equals(0).toArray(), []) as
     | RetainerWork[]
@@ -101,31 +98,20 @@ export function GlobalSearch() {
         id: d.id!,
         title: d.name,
         sub: '文档',
-        action: () => navigate({ page: 'docs', docsTab: 'library' }),
+        action: () => navigate({ page: 'docs' }),
       }))
     if (docItems.length) result.push({ label: '文档', icon: FolderOpen, items: docItems })
 
-    const templateItems = (templates ?? [])
-      .filter((t) => match(t.name) || match(t.category))
-      .slice(0, 5)
-      .map((t) => ({
-        id: t.id!,
-        title: t.name,
-        sub: `模板 · ${t.category}`,
-        action: () => navigate({ page: 'docs', docsTab: 'templates' }),
-      }))
-    if (templateItems.length) result.push({ label: '模板', icon: FileText, items: templateItems })
-
-    // 工作记录（工时 + 常法工作）
+    // 法律咨询记录 + 常法工作
     const workItems: { id: number; title: string; sub?: string; action: () => void }[] = []
-    for (const r of timeRecords ?? []) {
-      if (!match(r.description)) continue
-      const caseName = (cases ?? []).find((c) => c.id === r.caseId)?.name
+    for (const c of consults ?? []) {
+      if (!match(c.content) && !match(c.consultant)) continue
+      const caseName = (cases ?? []).find((x) => x.id === c.caseId)?.name
       workItems.push({
-        id: r.id!,
-        title: r.description ?? '未填写内容',
-        sub: `工时 · ${caseName ?? '未关联案件'}`,
-        action: () => navigate({ page: 'billing', billingTab: 'records' }),
+        id: c.id!,
+        title: c.content,
+        sub: `法律咨询 · ${c.consultant || '未填咨询人'}${caseName ? ` · ${caseName}` : ''}`,
+        action: () => navigate({ page: 'consultation' }),
       })
       if (workItems.length >= 5) break
     }
@@ -141,10 +127,10 @@ export function GlobalSearch() {
         if (workItems.length >= 5) break
       }
     }
-    if (workItems.length) result.push({ label: '工作记录', icon: Clock, items: workItems })
+    if (workItems.length) result.push({ label: '工作记录', icon: Chats, items: workItems })
 
     return result
-  }, [kw, cases, clients, retainers, docs, templates, timeRecords, retainerWorks, navigate])
+  }, [kw, cases, clients, retainers, docs, consults, retainerWorks, navigate])
 
   if (!searchOpen) return null
 
@@ -163,7 +149,7 @@ export function GlobalSearch() {
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="搜索案件、客户、常法客户、文档、模板…"
+            placeholder="搜索案件、客户、常法客户、文档…"
             className="flex-1 bg-transparent text-base text-text-main outline-none placeholder:text-text-muted/70"
           />
           <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-muted">ESC</kbd>

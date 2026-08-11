@@ -1,41 +1,52 @@
 import { useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
-  Clock,
   Receipt,
   ChartBar,
-  Plus,
+  UploadSimple,
+  Download,
+  Eye,
   PencilSimple,
   Trash,
-  Download,
   TrendUp,
-  CurrencyCny,
   Wallet,
-  Play,
-  Pause,
-  Stop,
+  FileText,
+  User,
 } from '@phosphor-icons/react'
 import { db } from '../../db/database'
 import { useApp } from '../../store/AppContext'
-import type { TimeRecord, LawCase, Invoice, RetainerWork, Settings } from '../../types'
-import { fmtDate, fmtHours, fmtMoney, fmtDateTime, fmtDuration, fmtDateInput, daysUntil } from '../../utils/dates'
+import type { InvoiceFile, InvoiceKind, LawCase, Client, DocFile } from '../../types'
+import { fmtDate, fmtMoney, fmtDateInput } from '../../utils/dates'
+import { downloadBlob, formatBytes } from '../../utils/format'
 import { Modal, ConfirmDialog } from '../../components/ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
 import { EmptyState } from '../../components/ui/EmptyState'
-import { Tag } from '../../components/ui/Tag'
-import { getSettings } from '../../db/database'
+import { DocPreview } from '../../components/ui/DocPreview'
+
+const KIND_META: Record<InvoiceKind, { label: string; cls: string }> = {
+  invoice: { label: '发票', cls: 'bg-success/10 text-success' },
+  receipt: { label: '收据', cls: 'bg-accent/10 text-accent' },
+  transfer: { label: '转账凭证', cls: 'bg-primary-light/10 text-primary-light' },
+  other: { label: '其他', cls: 'bg-bg-warm text-text-muted' },
+}
+
+const KIND_OPTIONS: { key: InvoiceKind; label: string }[] = [
+  { key: 'invoice', label: '发票' },
+  { key: 'receipt', label: '收据' },
+  { key: 'transfer', label: '转账凭证' },
+  { key: 'other', label: '其他' },
+]
 
 export default function BillingPage() {
   const { nav, navigate } = useApp()
-  const tab = nav.billingTab ?? 'records'
+  const tab = nav.billingTab ?? 'invoice'
 
   return (
-    <div className="mx-auto max-w-7xl p-6">
+    <div className="mx-auto max-w-6xl p-6">
       <div className="mb-5 flex gap-2">
         {(
           [
-            ['records', '工时记录', Clock],
-            ['invoice', '账单生成', Receipt],
+            ['invoice', '发票材料', Receipt],
             ['revenue', '收入看板', ChartBar],
           ] as const
         ).map(([k, label, Icon]) => (
@@ -50,265 +61,190 @@ export default function BillingPage() {
           </button>
         ))}
       </div>
-      {tab === 'records' && <TimeRecords />}
-      {tab === 'invoice' && <InvoiceGen />}
+      {tab === 'invoice' && <InvoiceFiles />}
       {tab === 'revenue' && <RevenueBoard />}
     </div>
   )
 }
 
-// ========== 工时记录 ==========
-function TimeRecords() {
-  const { timer, runningSeconds, startTimer, toggleTimer, endTimer } = useApp()
-  const [caseFilter, setCaseFilter] = useState<number | ''>('')
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
-  const [addOpen, setAddOpen] = useState(false)
-  const [startOpen, setStartOpen] = useState(false)
-  const [startCaseId, setStartCaseId] = useState<number | ''>('')
-  const [startDesc, setStartDesc] = useState('')
-  const [savedTip, setSavedTip] = useState('')
-  const savedTipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<TimeRecord | null>(null)
+// ========== 发票材料管理（用户自行上传，不做自动账单） ==========
+function InvoiceFiles() {
+  const [kindFilter, setKindFilter] = useState<InvoiceKind | 'all'>('all')
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<InvoiceFile | null>(null)
+  const [preview, setPreview] = useState<InvoiceFile | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<InvoiceFile | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const records = useLiveQuery(() => db.timeRecords.where('deleted').equals(0).toArray(), []) as TimeRecord[] | undefined
+  const files = useLiveQuery(() => db.invoiceFiles.where('deleted').equals(0).toArray(), []) as InvoiceFile[] | undefined
   const cases = useLiveQuery(() => db.cases.where('deleted').equals(0).toArray(), []) as LawCase[] | undefined
-  const settings = useLiveQuery(() => getSettings(), []) as Settings | undefined
-  const retainerWorks = useLiveQuery(() => db.retainerWorks.where('deleted').equals(0).toArray(), []) as
-    | RetainerWork[]
-    | undefined
+  const clients = useLiveQuery(() => db.clients.where('deleted').equals(0).toArray(), []) as Client[] | undefined
 
   const caseMap = useMemo(() => new Map((cases ?? []).map((c) => [c.id, c.name])), [cases])
-  const activeCases = useMemo(() => (cases ?? []).filter((c) => c.status === 'active'), [cases])
-
-  const includeRetainer = settings?.includeRetainerHours ?? true
-
-  // 合并常法工时（可选）
-  const allRecords = useMemo(() => {
-    const list = [...(records ?? [])]
-    if (includeRetainer) {
-      for (const w of retainerWorks ?? []) {
-        list.push({
-          id: `r-${w.id}` as unknown as number,
-          caseId: undefined,
-          date: w.date,
-          minutes: Math.round(w.hours * 60),
-          description: `[常法] ${w.content}`,
-          source: 'manual' as const,
-          createdAt: w.createdAt,
-          updatedAt: w.updatedAt,
-        } as TimeRecord)
-      }
-    }
-    return list.sort((a, b) => b.date - a.date)
-  }, [records, retainerWorks, includeRetainer])
+  const clientMap = useMemo(() => new Map((clients ?? []).map((c) => [c.id, c.name])), [clients])
 
   const filtered = useMemo(() => {
-    let list = allRecords
-    if (caseFilter !== '') list = list.filter((r) => r.caseId === caseFilter)
-    if (from) list = list.filter((r) => r.date >= new Date(from).getTime())
-    if (to) list = list.filter((r) => r.date <= new Date(`${to}T23:59:59`).getTime())
-    return list
-  }, [allRecords, caseFilter, from, to])
+    let list = [...(files ?? [])]
+    if (kindFilter !== 'all') list = list.filter((f) => f.kind === kindFilter)
+    return list.sort((a, b) => b.date - a.date || (b.id ?? 0) - (a.id ?? 0))
+  }, [files, kindFilter])
 
-  // 按日期分组
-  const groups = useMemo(() => {
-    const m = new Map<string, TimeRecord[]>()
-    for (const r of filtered) {
-      const key = fmtDate(r.date)
-      if (!m.has(key)) m.set(key, [])
-      m.get(key)!.push(r)
-    }
-    return Array.from(m.entries())
-  }, [filtered])
+  const totalAmount = filtered.reduce((s, f) => s + (f.amount ?? 0), 0)
+  const monthStart = useMemo(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime(), [])
+  const monthAmount = (files ?? [])
+    .filter((f) => f.date >= monthStart && f.amount !== undefined)
+    .reduce((s, f) => s + (f.amount ?? 0), 0)
 
-  const totalMinutes = filtered.reduce((s, r) => s + r.minutes, 0)
-
-  const timerSeconds = timer?.running ? runningSeconds : timer?.accumulated ?? 0
-
-  const startNew = () => {
-    if (!startCaseId) return
-    startTimer(Number(startCaseId), startDesc.trim() || undefined)
-    setStartOpen(false)
-    setStartCaseId('')
-    setStartDesc('')
+  const pickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    setPendingFile(f)
+    setUploadOpen(true)
   }
 
-  const finishTimer = () => {
-    const total = timer
-      ? timer.accumulated + (timer.running ? Math.floor((Date.now() - timer.lastTick) / 1000) : 0)
-      : 0
-    endTimer()
-    setSavedTip(total >= 10 ? '✓ 已保存工时记录' : '计时不足 10 秒，未保存')
-    if (savedTipTimer.current) clearTimeout(savedTipTimer.current)
-    savedTipTimer.current = setTimeout(() => setSavedTip(''), 3000)
+  const openPreview = (f: InvoiceFile) => {
+    if (!f.data) return
+    // 复用通用文档预览（字段兼容 DocFile）
+    setPreview(f)
   }
 
   return (
     <div>
-      {/* 计时器 */}
-      <div className="card mb-5 px-4 py-3">
-        {!timer ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-text-main">工时计时</p>
-              <p className="text-xs text-text-muted">记录你在某个案件上的实际工作耗时，结束后自动保存为工时记录，可用于「账单生成」按费率计费。</p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {savedTip && <span className="text-xs font-medium text-success">{savedTip}</span>}
-              <button className="btn-primary btn-sm" onClick={() => setStartOpen(true)}>
-                <Play size={13} /> 开始计时
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center gap-4">
-            <span
-              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-                timer.running ? 'bg-accent text-white' : 'bg-bg-warm text-accent'
-              }`}
-            >
-              <Clock size={18} weight={timer.running ? 'fill' : 'regular'} />
-            </span>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-text-main">
-                {timer.caseId ? caseMap.get(timer.caseId) ?? '已删除案件' : '未关联案件'}
-              </p>
-              <p className="truncate text-xs text-text-muted">{timer.description || '未填写工作内容'}</p>
-            </div>
-            <span className={`text-2xl font-semibold tabular-nums ${timer.running ? 'text-accent' : 'text-text-muted'}`}>
-              {fmtDuration(timerSeconds)}
-            </span>
-            <span className={`rounded-full px-2 py-0.5 text-xs ${timer.running ? 'bg-success/10 text-success' : 'bg-bg-warm text-text-muted'}`}>
-              {timer.running ? '计时中' : '已暂停'}
-            </span>
-            <div className="ml-auto flex shrink-0 items-center gap-2">
-              {savedTip && <span className="text-xs font-medium text-success">{savedTip}</span>}
-              <button className="btn-ghost btn-sm" onClick={toggleTimer} title={timer.running ? '暂停' : '继续'}>
-                {timer.running ? <Pause size={14} /> : <Play size={14} />}
-                {timer.running ? '暂停' : '继续'}
-              </button>
-              <button className="btn-primary btn-sm" onClick={finishTimer}>
-                <Stop size={14} /> 结束并保存
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="card mb-5 flex flex-wrap items-center gap-3 px-4 py-3">
-        <Select value={caseFilter} onChange={(e) => setCaseFilter(e.target.value ? Number(e.target.value) : '')} className="!w-48 !py-1.5 text-xs">
-          <option value="">全部案件</option>
-          {(cases ?? []).map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
-        <TextInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="!w-36 !py-1.5 text-xs" />
-        <span className="text-xs text-text-muted">至</span>
-        <TextInput type="date" value={to} onChange={(e) => setTo(e.target.value)} className="!w-36 !py-1.5 text-xs" />
-        <span className="ml-auto text-sm text-text-muted">
-          合计 <span className="font-semibold tabular-nums text-accent">{fmtHours(totalMinutes)}</span>
-        </span>
-        <button className="btn-primary btn-sm" onClick={() => setAddOpen(true)}>
-          <Plus size={14} /> 手动添加工时
-        </button>
-      </div>
-
-      <div className="space-y-4">
-        {groups.map(([day, list]) => (
-          <div key={day} className="card overflow-hidden">
-            <div className="flex items-center justify-between bg-bg-warm px-4 py-2">
-              <span className="text-sm font-medium text-text-main">{day}</span>
-              <span className="text-xs tabular-nums text-text-muted">
-                共 {list.length} 条 · {fmtHours(list.reduce((s, r) => s + r.minutes, 0))}
-              </span>
-            </div>
-            <div>
-              {list.map((r) => (
-                <div key={String(r.id)} className="flex items-center gap-3 border-b border-border px-4 py-3 last:border-0 hover:bg-bg-warm/50">
-                  <span className="w-24 shrink-0 text-xs tabular-nums text-text-muted">
-                    {r.start ? `${fmtDateTime(r.start).slice(11)}-${fmtDateTime(r.end).slice(11)}` : '—'}
-                  </span>
-                  <Tag color="accent" >{fmtHours(r.minutes)}</Tag>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-text-main">{r.description || '未填写工作内容'}</p>
-                    <p className="text-xs text-text-muted">
-                      {r.caseId ? caseMap.get(r.caseId) ?? '已删除案件' : r.description?.startsWith('[常法]') ? '常法工作' : '未关联案件'}
-                    </p>
-                  </div>
-                  {!String(r.id).startsWith('r-') && (
-                    <div className="flex shrink-0 gap-1">
-                      <button className="btn-ghost btn-sm !px-2" onClick={() => setConfirmDelete(r)}>
-                        <Trash size={13} />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-        {groups.length === 0 && (
-          <div className="card">
-            <EmptyState icon={<Clock size={24} />} title="暂无工时记录" action={<button className="btn-primary btn-sm" onClick={() => setAddOpen(true)}>手动添加工时</button>} />
-          </div>
-        )}
-      </div>
-
-      <AddTimeModal open={addOpen} onClose={() => setAddOpen(false)} cases={cases ?? []} />
-
-      {/* 开始计时 */}
-      <Modal
-        open={startOpen}
-        onClose={() => setStartOpen(false)}
-        title={timer ? '切换案件继续计时' : '开始计时'}
-        width={460}
-        footer={
-          <>
-            <button className="btn-ghost" onClick={() => setStartOpen(false)}>
-              取消
-            </button>
-            <button className="btn-primary" onClick={startNew} disabled={!startCaseId}>
-              开始计时
-            </button>
-          </>
-        }
+      {/* 上传区 */}
+      <div
+        className="card mb-5 flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault()
+          const f = e.dataTransfer.files?.[0]
+          if (f) {
+            setPendingFile(f)
+            setUploadOpen(true)
+          }
+        }}
       >
-        <div className="space-y-4">
-          <Field label="关联案件" required>
-            <Select value={startCaseId} onChange={(e) => setStartCaseId(Number(e.target.value))}>
-              <option value="">请选择案件</option>
-              {activeCases.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="工作内容简述">
-            <TextInput value={startDesc} onChange={(e) => setStartDesc(e.target.value)} placeholder="如：起草起诉状、研究证据…" />
-          </Field>
-          {timer && (
-            <p className="text-xs text-text-muted">
-              当前计时：{timer.caseId ? (caseMap.get(timer.caseId) ?? '') : ''} — 开始新计时将自动结束并保存当前这一段
-            </p>
-          )}
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text-main">发票与票据材料</p>
+          <p className="text-xs text-text-muted">
+            自行上传发票、收据、转账凭证等材料归档管理，系统不自动生成账单。已传 {filtered.length} 份，共 {fmtMoney(totalAmount)}
+          </p>
         </div>
-      </Modal>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-xs text-text-muted">本月 {fmtMoney(monthAmount)}</span>
+          <button className="btn-primary btn-sm" onClick={() => fileInputRef.current?.click()}>
+            <UploadSimple size={14} /> 上传发票/票据
+          </button>
+          <input ref={fileInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.doc,.docx,.xls,.xlsx" className="hidden" onChange={pickFile} />
+        </div>
+      </div>
+
+      {/* 类型筛选 */}
+      <div className="card mb-5 flex flex-wrap items-center gap-2 px-4 py-3">
+        {(
+          [
+            ['all', '全部'],
+            ['invoice', '发票'],
+            ['receipt', '收据'],
+            ['transfer', '转账凭证'],
+            ['other', '其他'],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setKindFilter(k)}
+            className={`chip ${kindFilter === k ? '!bg-primary !text-white' : ''}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* 列表 */}
+      <div className="space-y-2">
+        {filtered.map((f) => {
+          const kind = KIND_META[f.kind]
+          return (
+            <div key={f.id} className="group card flex items-center gap-3 px-4 py-3">
+              <FileText size={18} className="shrink-0 text-primary-light" />
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-2 truncate text-sm text-text-main">
+                  {f.name}
+                  <span className={`shrink-0 rounded-tag px-2 py-0.5 text-[10px] ${kind.cls}`}>{kind.label}</span>
+                </p>
+                <p className="truncate text-xs text-text-muted">
+                  {fmtDate(f.date)}
+                  {f.caseId && <span> · {caseMap.get(f.caseId) ?? '案件已删除'}</span>}
+                  {f.clientId && <span> · {clientMap.get(f.clientId) ?? '客户已删除'}</span>}
+                  {f.note && <span> · {f.note}</span>}
+                </p>
+              </div>
+              {f.amount !== undefined && (
+                <span className="shrink-0 text-sm font-medium tabular-nums text-accent">{fmtMoney(f.amount)}</span>
+              )}
+              <span className="shrink-0 text-xs tabular-nums text-text-muted">{formatBytes(f.size)}</span>
+              <div className="flex shrink-0 gap-1 opacity-0 transition group-hover:opacity-100">
+                <button className="btn-ghost btn-sm !px-2" onClick={() => openPreview(f)} title="预览">
+                  <Eye size={13} />
+                </button>
+                <button className="btn-ghost btn-sm !px-2" onClick={() => f.data && downloadBlob(f.data, f.name)} title="下载">
+                  <Download size={13} />
+                </button>
+                <button className="btn-ghost btn-sm !px-2" onClick={() => setEditTarget(f)} title="编辑">
+                  <PencilSimple size={13} />
+                </button>
+                <button className="btn-ghost btn-sm !px-2 !text-danger" onClick={() => setConfirmDelete(f)} title="删除">
+                  <Trash size={13} />
+                </button>
+              </div>
+            </div>
+          )
+        })}
+        {filtered.length === 0 && (
+          <div className="card">
+            <EmptyState
+              icon={<Receipt size={24} />}
+              title="暂无发票材料"
+              action={<button className="btn-primary btn-sm" onClick={() => fileInputRef.current?.click()}>上传第一份发票</button>}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 上传弹窗 */}
+      {(uploadOpen || editTarget) && (
+        <UploadInvoiceModal
+          key={editTarget?.id ?? 'new'}
+          open
+          file={pendingFile}
+          target={editTarget}
+          onClose={() => {
+            setUploadOpen(false)
+            setEditTarget(null)
+            setPendingFile(null)
+          }}
+          cases={cases ?? []}
+          clients={clients ?? []}
+        />
+      )}
+
+      {/* 预览 */}
+      {preview && (
+        <DocPreview doc={preview as unknown as DocFile} onClose={() => setPreview(null)} />
+      )}
 
       {/* 删除确认 */}
       <ConfirmDialog
         open={!!confirmDelete}
-        title="删除工时记录"
-        message={`确定删除「${confirmDelete?.description || '未填写内容'}」这条工时记录吗？`}
+        title="删除票据材料"
+        message={`确定删除「${confirmDelete?.name ?? ''}」吗？`}
         confirmText="删除"
         danger
         onCancel={() => setConfirmDelete(null)}
         onConfirm={() => {
-          if (confirmDelete && typeof confirmDelete.id === 'number') {
-            db.timeRecords.update(confirmDelete.id, { deleted: Date.now(), updatedAt: Date.now() })
+          if (confirmDelete?.id) {
+            db.invoiceFiles.update(confirmDelete.id, { deleted: Date.now(), updatedAt: Date.now() })
           }
           setConfirmDelete(null)
         }}
@@ -317,279 +253,122 @@ function TimeRecords() {
   )
 }
 
-function AddTimeModal({
+// ========== 上传 / 编辑发票材料 ==========
+function UploadInvoiceModal({
   open,
   onClose,
+  file,
+  target,
   cases,
+  clients,
 }: {
   open: boolean
   onClose: () => void
+  file: File | null
+  target: InvoiceFile | null
   cases: LawCase[]
+  clients: Client[]
 }) {
-  const [caseId, setCaseId] = useState<number | ''>('')
-  const [date, setDate] = useState(fmtDateInput())
-  const [start, setStart] = useState('09:00')
-  const [end, setEnd] = useState('10:00')
-  const [minutes, setMinutes] = useState('60')
-  const [desc, setDesc] = useState('')
-
-  const calcMinutes = () => {
-    if (start && end) {
-      const s = new Date(`2000-01-01T${start}`).getTime()
-      const e = new Date(`2000-01-01T${end}`).getTime()
-      if (e > s) setMinutes(String(Math.round((e - s) / 60000)))
-    }
-  }
+  const isEdit = !!target?.id
+  const [kind, setKind] = useState<InvoiceKind>(target?.kind ?? 'invoice')
+  const [date, setDate] = useState(target ? fmtDateInput(target.date) : fmtDateInput())
+  const [caseId, setCaseId] = useState<number | ''>(target?.caseId ?? '')
+  const [clientId, setClientId] = useState<number | ''>(target?.clientId ?? '')
+  const [amount, setAmount] = useState(target?.amount !== undefined ? String(target.amount) : '')
+  const [note, setNote] = useState(target?.note ?? '')
 
   const save = async () => {
-    if (!caseId || !date) return
-    await db.timeRecords.add({
-      caseId: Number(caseId),
+    if (!target && !file) return
+    const base = {
+      kind,
       date: new Date(date).getTime(),
-      minutes: Number(minutes) || 0,
-      description: desc.trim() || undefined,
-      source: 'manual',
-      createdAt: Date.now(),
+      caseId: caseId === '' ? undefined : Number(caseId),
+      clientId: clientId === '' ? undefined : Number(clientId),
+      amount: amount === '' || Number(amount) === 0 ? undefined : Number(amount),
+      note: note.trim() || undefined,
       updatedAt: Date.now(),
-    })
+    }
+    if (isEdit && target?.id) {
+      await db.invoiceFiles.update(target.id, base)
+    } else if (file) {
+      await db.invoiceFiles.add({
+        ...base,
+        name: file.name,
+        size: file.size,
+        mime: file.type,
+        data: file,
+        createdAt: Date.now(),
+      })
+    }
     onClose()
-    setDesc('')
   }
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="手动添加工时"
-      width={480}
+      title={isEdit ? `编辑票据 · ${target?.name}` : `上传票据 · ${file?.name ?? ''}`}
+      width={500}
       footer={
         <>
-          <button className="btn-ghost" onClick={onClose}>取消</button>
-          <button className="btn-primary" onClick={save} disabled={!caseId || !date}>保存</button>
+          <button className="btn-ghost" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn-primary" onClick={save}>
+            保存
+          </button>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-4">
-        <div className="col-span-2">
-          <Field label="关联案件" required>
-            <Select value={caseId} onChange={(e) => setCaseId(Number(e.target.value))}>
-              <option value="">请选择案件</option>
-              {cases.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-        <Field label="日期" required>
+        <Field label="票据类型" required>
+          <Select value={kind} onChange={(e) => setKind(e.target.value as InvoiceKind)}>
+            {KIND_OPTIONS.map((k) => (
+              <option key={k.key} value={k.key}>
+                {k.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="票据日期" required>
           <TextInput type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
-        <Field label="时长（小时）">
-          <div className="flex items-center gap-2">
-            <TextInput type="number" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
-            <button className="btn-ghost btn-sm shrink-0" onClick={calcMinutes}>
-              按起止算
-            </button>
-          </div>
+        <Field label="关联案件">
+          <Select value={caseId} onChange={(e) => setCaseId(e.target.value ? Number(e.target.value) : '')}>
+            <option value="">不关联</option>
+            {cases.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
         </Field>
-        <Field label="开始时间">
-          <TextInput type="time" value={start} onChange={(e) => setStart(e.target.value)} onBlur={calcMinutes} />
+        <Field label="关联客户">
+          <Select value={clientId} onChange={(e) => setClientId(e.target.value ? Number(e.target.value) : '')}>
+            <option value="">不关联</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
         </Field>
-        <Field label="结束时间">
-          <TextInput type="time" value={end} onChange={(e) => setEnd(e.target.value)} onBlur={calcMinutes} />
+        <Field label="金额（元）" hint="不填则不参与收入统计">
+          <TextInput type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="如：5000" />
         </Field>
-        <div className="col-span-2">
-          <Field label="工作内容">
-            <TextArea value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="如：起草起诉状、研究法律问题…" />
-          </Field>
-        </div>
+        <Field label="备注">
+          <TextInput value={note} onChange={(e) => setNote(e.target.value)} placeholder="如：XX案代理费发票" />
+        </Field>
       </div>
     </Modal>
   )
 }
 
-// ========== 账单生成 ==========
-function InvoiceGen() {
-  const [caseId, setCaseId] = useState<number | ''>('')
-  const [from, setFrom] = useState(fmtDateInput(new Date(new Date().setMonth(new Date().getMonth() - 1)).getTime()))
-  const [to, setTo] = useState(fmtDateInput())
-  const [travelFee, setTravelFee] = useState('0')
-  const [courtFee, setCourtFee] = useState('0')
-  const [otherFee, setOtherFee] = useState('0')
-
-  const cases = useLiveQuery(() => db.cases.where('deleted').equals(0).toArray(), []) as LawCase[] | undefined
-  const records = useLiveQuery(() => db.timeRecords.where('deleted').equals(0).toArray(), []) as TimeRecord[] | undefined
-  const settings = useLiveQuery(() => getSettings(), []) as Settings | undefined
-
-  const lawCase = cases?.find((c) => c.id === caseId)
-
-  const periodRecords = useMemo(
-    () =>
-      (records ?? []).filter(
-        (r) =>
-          r.caseId === caseId &&
-          r.date >= new Date(from).getTime() &&
-          r.date <= new Date(`${to}T23:59:59`).getTime(),
-      ),
-    [records, caseId, from, to],
-  )
-
-  const totalMinutes = periodRecords.reduce((s, r) => s + r.minutes, 0)
-  const rate = settings?.hourlyRate ?? 800
-  const laborFee = (totalMinutes / 60) * rate
-  const total = laborFee + Number(travelFee) + Number(courtFee) + Number(otherFee)
-
-  const exportPdf = () => {
-    const win = window.open('', '_blank')
-    if (!win) return
-    win.document.write(`
-      <html><head><title>账单</title><style>
-        body{font-family:'PingFang SC','SimSun';font-size:13px;color:#3a3a3a;padding:60px;line-height:1.7}
-        h1{text-align:center;font-size:20px;margin-bottom:32px;color:#5b6e7a}
-        .row{display:flex;justify-content:space-between;margin-bottom:4px}
-        table{width:100%;border-collapse:collapse;margin:20px 0}
-        th,td{border:1px solid #e5e3de;padding:8px;text-align:left}
-        th{background:#ebe9e4;font-weight:600}
-        .total{font-size:15px;font-weight:700;text-align:right;margin:16px 0}
-        .sig{margin-top:48px}
-      </style></head><body>
-        <h1>律师服务费用账单</h1>
-        <p><b>${settings?.firmName || ''}</b></p>
-        <p>律师：${settings?.lawyerName || ''}　电话：${settings?.phone || ''}</p>
-        <p>致：${lawCase?.clientName ?? ''}</p>
-        <p>案件：${lawCase?.name ?? ''}（${lawCase?.caseNo ?? ''}）</p>
-        <p>计费期间：${fmtDate(new Date(from).getTime())} - ${fmtDate(new Date(to).getTime())}</p>
-        <table>
-          <tr><th>项目</th><th>明细</th><th>金额（元）</th></tr>
-          <tr><td>律师费</td><td>${fmtHours(totalMinutes)} × 费率 ${rate}元/小时</td><td>${laborFee.toFixed(2)}</td></tr>
-          <tr><td>差旅费</td><td></td><td>${Number(travelFee).toFixed(2)}</td></tr>
-          <tr><td>法院费用</td><td></td><td>${Number(courtFee).toFixed(2)}</td></tr>
-          <tr><td>其他费用</td><td></td><td>${Number(otherFee).toFixed(2)}</td></tr>
-        </table>
-        <p class="total">合计：¥${total.toFixed(2)}</p>
-        <p>收款账户：${settings?.bankAccount || ''}</p>
-        <div class="sig"><p>日期：${fmtDate(Date.now())}</p></div>
-      </body></html>
-    `)
-    win.document.close()
-    win.focus()
-    setTimeout(() => win.print(), 300)
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_420px]">
-      <div className="card-pad">
-        <h2 className="mb-4 text-sm font-semibold text-text-main">账单参数</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="col-span-2">
-            <Field label="选择案件" required>
-              <Select value={caseId} onChange={(e) => setCaseId(e.target.value ? Number(e.target.value) : '')}>
-                <option value="">请选择案件</option>
-                {(cases ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-          <Field label="计费开始日期">
-            <TextInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          </Field>
-          <Field label="计费结束日期">
-            <TextInput type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          </Field>
-          <Field label="差旅费（元）">
-            <TextInput type="number" value={travelFee} onChange={(e) => setTravelFee(e.target.value)} />
-          </Field>
-          <Field label="法院费用（元）">
-            <TextInput type="number" value={courtFee} onChange={(e) => setCourtFee(e.target.value)} />
-          </Field>
-          <Field label="其他费用（元）">
-            <TextInput type="number" value={otherFee} onChange={(e) => setOtherFee(e.target.value)} />
-          </Field>
-        </div>
-        <div className="mt-5 rounded-btn bg-bg-warm p-4 text-sm">
-          <p className="mb-2 font-medium text-text-main">工时汇总</p>
-          <div className="flex justify-between">
-            <span className="text-text-muted">期间工时</span>
-            <span className="font-medium tabular-nums">{fmtHours(totalMinutes)}（{periodRecords.length} 条）</span>
-          </div>
-          <div className="mt-1 flex justify-between">
-            <span className="text-text-muted">小时费率（设置中配置）</span>
-            <span className="font-medium tabular-nums">{rate} 元/小时</span>
-          </div>
-          <div className="mt-1 flex justify-between">
-            <span className="text-text-muted">律师费</span>
-            <span className="font-semibold tabular-nums text-accent">{fmtMoney(laborFee)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* A4 预览 */}
-      <div className="card-pad">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text-main">账单预览</h2>
-          <button className="btn-primary btn-sm" onClick={exportPdf} disabled={!lawCase}>
-            <Download size={13} /> 导出 PDF
-          </button>
-        </div>
-        <div className="bg-white p-8 shadow-card" style={{ minHeight: 420 }}>
-          <h3 className="mb-6 text-center text-lg font-bold text-primary">律师服务费用账单</h3>
-          <p className="text-sm">{settings?.firmName || '律师事务所'}</p>
-          <p className="text-sm">律师：{settings?.lawyerName || ''}</p>
-          <p className="mt-2 text-sm">致：{lawCase?.clientName ?? '—'}</p>
-          <p className="text-sm">案件：{lawCase?.name ?? '—'}</p>
-          <p className="text-sm">计费期间：{fmtDate(new Date(from).getTime())} - {fmtDate(new Date(to).getTime())}</p>
-          <table className="mt-4 w-full text-sm">
-            <thead>
-              <tr className="border-b-2 border-border">
-                <th className="py-2 text-left font-medium">项目</th>
-                <th className="py-2 text-left font-medium">明细</th>
-                <th className="py-2 text-right font-medium">金额</th>
-              </tr>
-            </thead>
-            <tbody className="text-text-main">
-              <tr>
-                <td className="py-2">律师费</td>
-                <td className="py-2 text-xs text-text-muted">{fmtHours(totalMinutes)} × {rate}元/小时</td>
-                <td className="py-2 text-right tabular-nums">{laborFee.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td className="py-2">差旅费</td>
-                <td className="py-2" />
-                <td className="py-2 text-right tabular-nums">{Number(travelFee).toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td className="py-2">法院费用</td>
-                <td className="py-2" />
-                <td className="py-2 text-right tabular-nums">{Number(courtFee).toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td className="py-2">其他费用</td>
-                <td className="py-2" />
-                <td className="py-2 text-right tabular-nums">{Number(otherFee).toFixed(2)}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p className="mt-4 text-right text-base font-bold tabular-nums text-text-main">合计：¥{total.toFixed(2)}</p>
-          <p className="mt-8 text-xs text-text-muted">收款账户：{settings?.bankAccount || '未配置'}</p>
-          <p className="mt-6 text-right text-xs text-text-muted">{fmtDate(Date.now())}</p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ========== 收入看板 ==========
+// ========== 收入看板（基于上传发票金额） ==========
 function RevenueBoard() {
-  const { navigate } = useApp()
-  const cases = useLiveQuery(() => db.cases.where('deleted').equals(0).toArray(), []) as LawCase[] | undefined
-  const invoices = useLiveQuery(() => db.invoices.where('deleted').equals(0).toArray(), []) as Invoice[] | undefined
-  const payments = useLiveQuery(() => db.retainerPayments.where('deleted').equals(0).toArray(), []) as
-    | (import('../../types').RetainerPayment)[]
-    | undefined
+  const files = useLiveQuery(() => db.invoiceFiles.where('deleted').equals(0).toArray(), []) as InvoiceFile[] | undefined
+  const clients = useLiveQuery(() => db.clients.where('deleted').equals(0).toArray(), []) as Client[] | undefined
+  const clientMap = useMemo(() => new Map((clients ?? []).map((c) => [c.id, c.name])), [clients])
 
   const now = new Date()
   const thisMonth = now.getMonth()
@@ -597,61 +376,63 @@ function RevenueBoard() {
   const monthStart = new Date(thisYear, thisMonth, 1).getTime()
   const nextMonthStart = new Date(thisYear, thisMonth + 1, 1).getTime()
 
-  const monthRevenue = useMemo(() => {
-    let sum = 0
-    for (const c of cases ?? []) {
-      if (c.fee && c.filedDate && c.filedDate >= monthStart && c.filedDate < nextMonthStart) sum += c.fee
-    }
-    // 常法付款也算本月回款
-    return sum
-  }, [cases, monthStart, nextMonthStart])
-
-  const monthPaid = useMemo(
-    () => (payments ?? []).filter((p) => p.date >= monthStart && p.date < nextMonthStart).reduce((s, p) => s + p.amount, 0),
-    [payments, monthStart, nextMonthStart],
-  )
-
-  const unpaidTotal = useMemo(
+  const monthFee = useMemo(
     () =>
-      (cases ?? [])
-        .filter((c) => c.status !== 'closed')
-        .reduce((s, c) => s + (c.fee ?? 0), 0) -
-      (payments ?? []).reduce((s, p) => s + p.amount, 0),
-    [cases, payments],
+      (files ?? [])
+        .filter((f) => f.amount !== undefined && f.date >= monthStart && f.date < nextMonthStart)
+        .reduce((s, f) => s + (f.amount ?? 0), 0),
+    [files, monthStart, nextMonthStart],
+  )
+  const monthCount = useMemo(
+    () => (files ?? []).filter((f) => f.date >= monthStart && f.date < nextMonthStart).length,
+    [files, monthStart, nextMonthStart],
+  )
+  const totalFee = useMemo(
+    () => (files ?? []).filter((f) => f.amount !== undefined).reduce((s, f) => s + (f.amount ?? 0), 0),
+    [files],
   )
 
-  // 近6个月收入（律师费按收案月计）
+  // 近6个月发票金额
   const trend = useMemo(() => {
     const arr: { label: string; amount: number }[] = []
     for (let i = 5; i >= 0; i--) {
       const d = new Date(thisYear, thisMonth - i, 1)
       const s = d.getTime()
       const e = new Date(thisYear, thisMonth - i + 1, 1).getTime()
-      const amount =
-        (cases ?? []).filter((c) => c.filedDate && c.filedDate >= s && c.filedDate < e).reduce((sum, c) => sum + (c.fee ?? 0), 0) +
-        (payments ?? []).filter((p) => p.date >= s && p.date < e).reduce((sum, p) => sum + p.amount, 0)
+      const amount = (files ?? [])
+        .filter((f) => f.amount !== undefined && f.date >= s && f.date < e)
+        .reduce((sum, f) => sum + (f.amount ?? 0), 0)
       arr.push({ label: `${d.getMonth() + 1}月`, amount })
     }
     return arr
-  }, [cases, payments, thisYear, thisMonth])
+  }, [files, thisYear, thisMonth])
 
   const maxAmount = Math.max(...trend.map((t) => t.amount), 1)
 
-  const ranking = useMemo(
-    () => [...(cases ?? [])].filter((c) => c.fee).sort((a, b) => (b.fee ?? 0) - (a.fee ?? 0)).slice(0, 6),
-    [cases],
-  )
+  // 客户发票金额排行（按关联客户，未关联的按"未关联"归并）
+  const ranking = useMemo(() => {
+    const m = new Map<string, { name: string; count: number; fee: number }>()
+    for (const f of files ?? []) {
+      if (f.amount === undefined) continue
+      const name = f.clientId ? clientMap.get(f.clientId) ?? '客户已删除' : '未关联客户'
+      const cur = m.get(name) ?? { name, count: 0, fee: 0 }
+      cur.count += 1
+      cur.fee += f.amount
+      m.set(name, cur)
+    }
+    return [...m.values()].sort((a, b) => b.fee - a.fee).slice(0, 6)
+  }, [files, clientMap])
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-4">
-        <StatCard icon={<TrendUp size={18} />} label="本月创收" value={fmtMoney(monthRevenue)} accent />
-        <StatCard icon={<CurrencyCny size={18} />} label="本月回款" value={fmtMoney(monthPaid)} accent />
-        <StatCard icon={<Wallet size={18} />} label="未回款总额" value={fmtMoney(Math.max(0, unpaidTotal))} />
+        <StatCard icon={<TrendUp size={18} />} label="本月发票金额" value={fmtMoney(monthFee)} accent />
+        <StatCard icon={<Receipt size={18} />} label="本月票据张数" value={`${monthCount} 张`} />
+        <StatCard icon={<Wallet size={18} />} label="累计票据金额" value={fmtMoney(totalFee)} />
       </div>
 
       <div className="card-pad">
-        <h2 className="mb-4 text-sm font-semibold text-text-main">近 6 个月收入趋势</h2>
+        <h2 className="mb-4 text-sm font-semibold text-text-main">近 6 个月发票金额趋势</h2>
         <div className="flex h-48 items-end gap-6 px-4">
           {trend.map((t, i) => {
             const isCurrent = i === trend.length - 1
@@ -671,25 +452,23 @@ function RevenueBoard() {
       </div>
 
       <div className="card-pad">
-        <h2 className="mb-4 text-sm font-semibold text-text-main">案件收入排行</h2>
+        <h2 className="mb-4 flex items-center gap-1.5 text-sm font-semibold text-text-main">
+          <User size={15} /> 客户发票金额排行
+        </h2>
         <div className="space-y-2">
-          {ranking.map((c, i) => (
-            <button
-              key={c.id}
-              onClick={() => navigate({ page: 'cases', caseId: c.id })}
-              className="flex w-full items-center gap-3 rounded-btn px-3 py-2.5 text-left transition hover:bg-bg-warm"
-            >
+          {ranking.map((r, i) => (
+            <div key={r.name} className="flex w-full items-center gap-3 rounded-btn px-3 py-2.5">
               <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${i < 3 ? 'bg-accent text-white' : 'bg-bg-warm text-text-muted'}`}>
                 {i + 1}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm text-text-main">{c.name}</p>
-                <p className="text-xs text-text-muted">{c.clientName} · {fmtDate(c.filedDate)}</p>
+                <p className="truncate text-sm text-text-main">{r.name}</p>
+                <p className="text-xs text-text-muted">{r.count} 张票据</p>
               </div>
-              <span className="shrink-0 text-sm font-medium tabular-nums text-accent">{fmtMoney(c.fee)}</span>
-            </button>
+              <span className="shrink-0 text-sm font-medium tabular-nums text-accent">{fmtMoney(r.fee)}</span>
+            </div>
           ))}
-          {ranking.length === 0 && <EmptyState icon={<ChartBar size={24} />} title="暂无收入数据" />}
+          {ranking.length === 0 && <EmptyState icon={<ChartBar size={24} />} title="暂无发票数据，请先上传发票材料" />}
         </div>
       </div>
     </div>

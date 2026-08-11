@@ -6,6 +6,8 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
+    "test": "vitest run",
+    "check": "npm test && npx tsc -b --pretty false && vite build && node --check electron/main.cjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "desktop": "npm run build && electron .",
@@ -30,10 +32,12 @@
     "autoprefixer": "^10.4.20",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
+    "fake-indexeddb": "^6.2.5",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "typescript": "~5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^3.2.7"
   },
   "build": {
     "appId": "com.lawyer.workbench",

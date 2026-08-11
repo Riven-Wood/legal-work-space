@@ -1,13 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useReducer, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
-  addMonths,
-  subMonths,
   startOfMonth,
   endOfMonth,
-  startOfWeek,
-  endOfWeek,
-  addDays,
   isSameMonth,
   isSameDay,
   format,
@@ -25,32 +20,37 @@ import {
   ShieldWarning,
   ArrowUpRight,
   NotePencil,
+  Trash,
 } from '@phosphor-icons/react'
 import { db } from '../../db/database'
 import type { CalendarEvent, LawCase, EventType } from '../../types'
-import { fmtDate, daysUntil } from '../../utils/dates'
-import { Modal } from '../../components/ui/Modal'
+import { fmtDate, fmtDateInput, daysUntil } from '../../utils/dates'
+import { Modal, ConfirmDialog } from '../../components/ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
-import { Tag } from '../../components/ui/Tag'
 import { useApp } from '../../store/AppContext'
+import { calendarTitle, calendarTransition, calendarVisibleDays } from '../../utils/calendarNavigation'
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
 
-const TYPE_META: Record<EventType, { label: string; color: string; dot: string }> = {
-  hearing: { label: '开庭', color: 'bg-accent text-white', dot: '#b09878' },
-  meeting: { label: '会见', color: 'bg-primary text-white', dot: '#4b5563' },
-  'evidence-deadline': { label: '举证截止', color: 'bg-danger text-white', dot: '#c4816b' },
-  'appeal-deadline': { label: '上诉截止', color: 'bg-danger text-white', dot: '#c4816b' },
-  'enforcement-deadline': { label: '申请执行截止', color: 'bg-danger text-white', dot: '#c4816b' },
-  'preservation-expiry': { label: '保全到期', color: 'bg-accent text-white', dot: '#b09878' },
-  other: { label: '其他', color: 'bg-primary-light text-white', dot: '#9aa3ad' },
+// 每种类型使用高区分度配色：text 为文字色，bg 为浅底色（白底日历上保证可读性）
+const TYPE_META: Record<EventType, { label: string; text: string; bg: string }> = {
+  hearing: { label: '开庭', text: '#b91c1c', bg: '#fdecec' },
+  meeting: { label: '会见', text: '#1d4ed8', bg: '#e8f0fe' },
+  'evidence-deadline': { label: '举证截止', text: '#c2410c', bg: '#fdf0e3' },
+  'appeal-deadline': { label: '上诉截止', text: '#7c3aed', bg: '#f1eafd' },
+  'enforcement-deadline': { label: '申请执行截止', text: '#0f766e', bg: '#e0f2f0' },
+  'preservation-expiry': { label: '保全到期', text: '#15803d', bg: '#e7f5ea' },
+  other: { label: '其他', text: '#5b6470', bg: '#eff1f3' },
 }
 
 export default function CalendarPage() {
-  const [view, setView] = useState<'month' | 'week' | 'list'>('month')
-  const [month, setMonth] = useState(() => startOfMonth(new Date()))
-  const [selectedDate, setSelectedDate] = useState(() => new Date())
+  const [{ view, anchor: visibleDate }, dispatchCalendar] = useReducer(calendarTransition, undefined, () => ({
+    view: 'month' as const,
+    anchor: new Date(),
+  }))
   const [addOpen, setAddOpen] = useState(false)
+  const [editEv, setEditEv] = useState<CalendarEvent | null>(null)
+  const [confirmDel, setConfirmDel] = useState<CalendarEvent | null>(null)
 
   const events = useLiveQuery(() => db.events.where('deleted').equals(0).toArray(), []) as CalendarEvent[] | undefined
   const cases = useLiveQuery(() => db.cases.where('deleted').equals(0).toArray(), []) as LawCase[] | undefined
@@ -59,42 +59,22 @@ export default function CalendarPage() {
   const selectedEvents = useMemo(
     () =>
       (events ?? [])
-        .filter((e) => isSameDay(new Date(e.date), selectedDate))
+        .filter((e) => isSameDay(new Date(e.date), visibleDate))
         .sort((a, b) => (a.allDay ? -1 : 1) - (b.allDay ? -1 : 1)),
-    [events, selectedDate],
+    [events, visibleDate],
   )
 
   const listEvents = useMemo(
     () =>
       (events ?? [])
-        .filter((e) => e.date >= startOfMonth(month).getTime() && e.date <= endOfMonth(month).getTime())
+        .filter((e) => e.date >= startOfMonth(visibleDate).getTime() && e.date <= endOfMonth(visibleDate).getTime())
         .sort((a, b) => a.date - b.date),
-    [events, month],
+    [events, visibleDate],
   )
 
-  const weekDays = useMemo(() => {
-    const start = startOfWeek(selectedDate, { weekStartsOn: 1 })
-    const end = endOfWeek(selectedDate, { weekStartsOn: 1 })
-    const days = []
-    let d = start
-    while (d <= end) {
-      days.push(d)
-      d = addDays(d, 1)
-    }
-    return days
-  }, [selectedDate])
+  const weekDays = useMemo(() => calendarVisibleDays(visibleDate, 'week'), [visibleDate])
 
-  const monthCells = useMemo(() => {
-    const start = startOfWeek(startOfMonth(month), { weekStartsOn: 1 })
-    const end = endOfWeek(endOfMonth(month), { weekStartsOn: 1 })
-    const cells = []
-    let d = start
-    while (d <= end) {
-      cells.push(d)
-      d = addDays(d, 1)
-    }
-    return cells
-  }, [month])
+  const monthCells = useMemo(() => calendarVisibleDays(visibleDate, 'month'), [visibleDate])
 
   const eventsByDay = useMemo(() => {
     const m = new Map<string, CalendarEvent[]>()
@@ -107,7 +87,7 @@ export default function CalendarPage() {
   }, [events])
 
   return (
-    <div className="mx-auto max-w-7xl p-6">
+    <div className="mx-auto max-w-[1560px] p-6">
       <div className="mb-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex rounded-tag bg-bg-warm p-0.5">
@@ -120,7 +100,7 @@ export default function CalendarPage() {
             ).map(([k, label]) => (
               <button
                 key={k}
-                onClick={() => setView(k)}
+                onClick={() => dispatchCalendar({ type: 'set-view', view: k })}
                 className={`rounded px-3 py-1 text-sm transition ${
                   view === k ? 'bg-primary text-white' : 'text-text-muted hover:text-text-main'
                 }`}
@@ -130,15 +110,26 @@ export default function CalendarPage() {
             ))}
           </div>
           <div className="flex items-center gap-1">
-            <button className="btn-ghost btn-sm !px-2" onClick={() => setMonth(subMonths(month, 1))}>
+            <button
+              className="btn-ghost btn-sm !px-2"
+              onClick={() => dispatchCalendar({ type: 'navigate', direction: -1 })}
+              aria-label={view === 'week' ? '上一周' : '上一月'}
+              title={view === 'week' ? '上一周' : '上一月'}
+            >
               <CaretLeft size={14} />
             </button>
             <span className="min-w-[120px] text-center text-sm font-semibold text-text-main">
-              {format(month, 'yyyy年M月', { locale: zhCN })}
+              {calendarTitle(visibleDate, view)}
             </span>
-            <button className="btn-ghost btn-sm !px-2" onClick={() => setMonth(addMonths(month, 1))}>
+            <button
+              className="btn-ghost btn-sm !px-2"
+              onClick={() => dispatchCalendar({ type: 'navigate', direction: 1 })}
+              aria-label={view === 'week' ? '下一周' : '下一月'}
+              title={view === 'week' ? '下一周' : '下一月'}
+            >
               <CaretRight size={14} />
             </button>
+            <button className="btn-ghost btn-sm ml-1" onClick={() => dispatchCalendar({ type: 'today', today: new Date() })}>今天</button>
           </div>
         </div>
         <button className="btn-primary" onClick={() => setAddOpen(true)}>
@@ -146,17 +137,20 @@ export default function CalendarPage() {
         </button>
       </div>
 
-      {/* 图例 */}
-      <div className="mb-4 flex flex-wrap gap-4 text-xs text-text-muted">
+      {/* 图例：与日历上的文字标签同款配色，方便对照 */}
+      <div className="mb-4 flex flex-wrap gap-2">
         {Object.entries(TYPE_META).map(([k, v]) => (
-          <span key={k} className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full" style={{ background: v.dot }} />
+          <span
+            key={k}
+            className="rounded-tag px-2 py-0.5 text-[11px] font-medium"
+            style={{ background: v.bg, color: v.text }}
+          >
             {v.label}
           </span>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_340px]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
         {/* ===== 日历主体 ===== */}
         <div className="card p-4">
           {view === 'month' && (
@@ -172,17 +166,16 @@ export default function CalendarPage() {
                 {monthCells.map((d, i) => {
                   const key = format(d, 'yyyy-MM-dd')
                   const dayEvents = eventsByDay.get(key) ?? []
-                  const selected = isSameDay(d, selectedDate)
+                  const selected = isSameDay(d, visibleDate)
                   const today = isSameDay(d, new Date())
-                  const inMonth = isSameMonth(d, month)
+                  const inMonth = isSameMonth(d, visibleDate)
                   return (
                     <button
                       key={i}
                       onClick={() => {
-                        setSelectedDate(d)
-                        setMonth(startOfMonth(d))
+                        dispatchCalendar({ type: 'set-anchor', anchor: d })
                       }}
-                      className={`flex min-h-[64px] flex-col items-center gap-1 rounded-btn border p-1.5 transition ${
+                      className={`flex min-h-[110px] flex-col items-stretch gap-1 rounded-btn border p-1.5 text-left transition ${
                         selected
                           ? 'border-accent bg-bg-warm'
                           : today
@@ -191,14 +184,31 @@ export default function CalendarPage() {
                       }`}
                     >
                       <span
-                        className={`text-xs ${today ? 'font-bold text-accent' : inMonth ? 'text-text-main' : 'text-text-muted/50'}`}
+                        className={`text-xs leading-none ${
+                          today ? 'font-bold text-accent' : inMonth ? 'font-medium text-text-main' : 'text-text-muted/50'
+                        }`}
                       >
                         {format(d, 'd')}
                       </span>
-                      <div className="flex flex-wrap justify-center gap-0.5">
-                        {dayEvents.slice(0, 3).map((e) => (
-                          <span key={e.id} className="h-1.5 w-1.5 rounded-full" style={{ background: TYPE_META[e.type].dot }} />
-                        ))}
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        {dayEvents.slice(0, 3).map((e) => {
+                          const meta = TYPE_META[e.type]
+                          return (
+                            <span
+                              key={e.id}
+                              className="block w-full truncate rounded px-1 py-px text-[10px] leading-[1.5] font-medium"
+                              style={{ background: meta.bg, color: meta.text }}
+                              title={`【${meta.label}】${e.title}`}
+                            >
+                              {e.title}
+                            </span>
+                          )
+                        })}
+                        {dayEvents.length > 3 && (
+                          <span className="px-1 text-[10px] leading-tight text-text-muted">
+                            +{dayEvents.length - 3} 更多
+                          </span>
+                        )}
                       </div>
                     </button>
                   )
@@ -212,12 +222,12 @@ export default function CalendarPage() {
               {weekDays.map((d) => {
                 const key = format(d, 'yyyy-MM-dd')
                 const dayEvents = eventsByDay.get(key) ?? []
-                const selected = isSameDay(d, selectedDate)
+                const selected = isSameDay(d, visibleDate)
                 const today = isSameDay(d, new Date())
                 return (
                   <div key={key}>
                     <button
-                      onClick={() => setSelectedDate(d)}
+                      onClick={() => dispatchCalendar({ type: 'set-anchor', anchor: d })}
                       className={`w-full rounded-btn border p-2 text-center ${
                         selected ? 'border-accent bg-bg-warm' : today ? 'border-primary/40' : 'border-transparent'
                       }`}
@@ -226,16 +236,19 @@ export default function CalendarPage() {
                       <p className={`text-sm font-semibold ${today ? 'text-accent' : 'text-text-main'}`}>{format(d, 'd')}</p>
                     </button>
                     <div className="mt-1.5 space-y-1">
-                      {dayEvents.map((e) => (
-                        <div
-                          key={e.id}
-                          className="truncate rounded-tag px-1.5 py-0.5 text-[10px] text-white"
-                          style={{ background: TYPE_META[e.type].dot }}
-                          title={e.title}
-                        >
-                          {e.title}
-                        </div>
-                      ))}
+                      {dayEvents.map((e) => {
+                        const meta = TYPE_META[e.type]
+                        return (
+                          <div
+                            key={e.id}
+                            className="truncate rounded-tag px-1.5 py-0.5 text-[10px] font-medium"
+                            style={{ background: meta.bg, color: meta.text }}
+                            title={`【${meta.label}】${e.title}`}
+                          >
+                            {e.title}
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 )
@@ -250,7 +263,12 @@ export default function CalendarPage() {
                 return (
                   <div key={e.id} className="flex items-center gap-3 rounded-btn px-3 py-2.5 transition hover:bg-bg-warm">
                     <span className="w-20 shrink-0 text-xs tabular-nums text-text-muted">{fmtDate(e.date)}</span>
-                    <Tag color="warm" >{meta.label}</Tag>
+                    <span
+                      className="shrink-0 rounded-tag px-2 py-0.5 text-[11px] font-medium"
+                      style={{ background: meta.bg, color: meta.text }}
+                    >
+                      {meta.label}
+                    </span>
                     <span className="flex-1 truncate text-sm text-text-main">{e.title}</span>
                     {e.caseId && <span className="shrink-0 text-xs text-text-muted">{caseMap.get(e.caseId)}</span>}
                   </div>
@@ -266,16 +284,21 @@ export default function CalendarPage() {
           <div className="card-pad">
             <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-text-main">
               <CalendarBlank size={15} />
-              {format(selectedDate, 'M月d日 EEEE', { locale: zhCN })}
+              {format(visibleDate, 'M月d日 EEEE', { locale: zhCN })}
             </h3>
             <div className="space-y-2">
               {selectedEvents.map((e) => {
                 const meta = TYPE_META[e.type]
                 const d = daysUntil(e.date)
                 return (
-                  <div key={e.id} className="rounded-btn border border-border p-3">
+                  <div key={e.id} className="group rounded-btn border border-border p-3">
                     <div className="flex items-center justify-between gap-2">
-                      <span className={`rounded-tag px-2 py-0.5 text-[11px] ${meta.color}`}>{meta.label}</span>
+                      <span
+                        className="rounded-tag px-2 py-0.5 text-[11px] font-medium"
+                        style={{ background: meta.bg, color: meta.text }}
+                      >
+                        {meta.label}
+                      </span>
                       {d <= 7 && <span className="text-[11px] font-medium text-danger">{d < 0 ? `已逾期${-d}天` : d === 0 ? '今天' : `还有${d}天`}</span>}
                     </div>
                     <p className="mt-1.5 text-sm font-medium text-text-main">{e.title}</p>
@@ -284,6 +307,22 @@ export default function CalendarPage() {
                     )}
                     {e.time && !e.allDay && <p className="text-xs text-text-muted">时间：{e.time}</p>}
                     {e.note && <p className="mt-1 text-xs text-text-muted">{e.note}</p>}
+                    <div className="mt-2 flex justify-end gap-1 opacity-0 transition group-hover:opacity-100">
+                      <button
+                        className="flex items-center gap-1 rounded-tag px-2 py-0.5 text-[11px] text-text-muted transition hover:bg-bg-warm hover:text-text-main"
+                        onClick={() => setEditEv(e)}
+                        title="编辑日程"
+                      >
+                        <NotePencil size={12} /> 编辑
+                      </button>
+                      <button
+                        className="flex items-center gap-1 rounded-tag px-2 py-0.5 text-[11px] text-text-muted transition hover:bg-bg-warm hover:text-danger"
+                        onClick={() => setConfirmDel(e)}
+                        title="删除日程"
+                      >
+                        <Trash size={12} /> 删除
+                      </button>
+                    </div>
                   </div>
                 )
               })}
@@ -296,7 +335,24 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <AddEventModal open={addOpen} onClose={() => setAddOpen(false)} defaultDate={selectedDate} />
+      <AddEventModal open={addOpen} onClose={() => setAddOpen(false)} defaultDate={visibleDate} />
+      {editEv && (
+        <AddEventModal open onClose={() => setEditEv(null)} defaultDate={new Date(editEv.date)} ev={editEv} />
+      )}
+      {confirmDel && (
+        <ConfirmDialog
+          open
+          title="删除日程"
+          message={`确定删除「${confirmDel.title}」吗？删除后案件详情中对应的关键日期也会一并移除。`}
+          confirmText="删除"
+          danger
+          onCancel={() => setConfirmDel(null)}
+          onConfirm={() => {
+            db.events.update(confirmDel.id!, { deleted: Date.now(), updatedAt: Date.now() })
+            setConfirmDel(null)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -305,26 +361,29 @@ function AddEventModal({
   open,
   onClose,
   defaultDate,
+  ev,
 }: {
   open: boolean
   onClose: () => void
   defaultDate: Date
+  ev?: CalendarEvent | null
 }) {
   const { navigate } = useApp()
   const cases = useLiveQuery(() => db.cases.where('deleted').equals(0).toArray(), []) as LawCase[] | undefined
-  const [title, setTitle] = useState('')
-  const [date, setDate] = useState(format(defaultDate, 'yyyy-MM-dd'))
-  const [time, setTime] = useState('')
-  const [allDay, setAllDay] = useState(true)
-  const [type, setType] = useState<EventType>('hearing')
-  const [caseId, setCaseId] = useState<number | ''>('')
-  const [reminder, setReminder] = useState<'none' | 'same-day' | '1d' | '3d' | '7d'>('none')
-  const [note, setNote] = useState('')
+  const isEdit = !!ev?.id
+  const [title, setTitle] = useState(ev?.title ?? '')
+  const [date, setDate] = useState(ev ? fmtDateInput(ev.date) : format(defaultDate, 'yyyy-MM-dd'))
+  const [time, setTime] = useState(ev?.time ?? '')
+  const [allDay, setAllDay] = useState(ev ? ev.allDay : true)
+  const [type, setType] = useState<EventType>(ev?.type ?? 'hearing')
+  const [caseId, setCaseId] = useState<number | ''>(ev?.caseId ?? '')
+  const [reminder, setReminder] = useState<'none' | 'same-day' | '1d' | '3d' | '7d'>(ev?.reminder ?? 'none')
+  const [note, setNote] = useState(ev?.note ?? '')
 
   const save = async () => {
     if (!title.trim()) return
     const dateTs = new Date(`${date}T${time || '09:00'}`).getTime()
-    await db.events.add({
+    const base = {
       title: title.trim(),
       date: dateTs,
       time: allDay ? undefined : time || undefined,
@@ -333,9 +392,16 @@ function AddEventModal({
       caseId: caseId || undefined,
       reminder,
       note: note.trim() || undefined,
-      createdAt: Date.now(),
       updatedAt: Date.now(),
-    })
+    }
+    if (isEdit) {
+      await db.events.update(ev.id!, base)
+    } else {
+      await db.events.add({
+        ...base,
+        createdAt: Date.now(),
+      })
+    }
     onClose()
     setTitle('')
     setNote('')
@@ -345,7 +411,7 @@ function AddEventModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="添加日程"
+      title={isEdit ? '编辑日程' : '添加日程'}
       width={520}
       footer={
         <>

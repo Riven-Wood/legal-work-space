@@ -37,6 +37,8 @@ import { Field, TextInput, Select, TextArea } from '../../components/ui/Field'
 import { Tag } from '../../components/ui/Tag'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { RetainerForm, retainerStatus } from './RetainerList'
+import { printHtmlDocument } from '../../utils/browserPrint'
+import { buildRetainerReportDocument } from '../../utils/printDocuments'
 
 export default function RetainerDetail() {
   const { nav, navigate } = useApp()
@@ -814,6 +816,7 @@ function ReportModal({
       .catch(() => {})
     // 打开预览打印
     openReportPrint(retainer, periodWorks, receiver || retainer.contactName || '', summary, fromDate, toDate)
+      .catch((error) => window.alert(error instanceof Error ? `打印失败：${error.message}` : '打印失败，请重试'))
     onClose()
   }
 
@@ -882,9 +885,7 @@ function openReportPrint(
   summary: string,
   fromDate: number,
   toDate: number,
-) {
-  const win = window.open('', '_blank')
-  if (!win) return
+): Promise<void> {
   const totalHours = works.reduce((s, w) => s + w.hours, 0)
   const byType = new Map<string, { count: number; hours: number }>()
   for (const w of works) {
@@ -902,58 +903,19 @@ function openReportPrint(
     monthMap.set(key, cur)
   }
 
-  const typeRows = Array.from(byType.entries())
-    .map(
-      ([t, v]) =>
-        `<tr><td>${t}</td><td>${v.count}</td><td>${v.hours}</td><td>${((v.hours / Math.max(totalHours, 0.001)) * 100).toFixed(1)}%</td></tr>`,
-    )
-    .join('')
-  const monthRows = Array.from(monthMap.entries())
-    .map(([m, v]) => `<tr><td>${m}</td><td>${v.count}</td><td>${v.hours}h</td></tr>`)
-    .join('')
-  const detailRows = works
-    .map(
-      (w) =>
-        `<tr><td>${fmtDate(w.date)}</td><td>${w.type}</td><td>${w.content}</td><td>${w.hours}h</td></tr>`,
-    )
-    .join('')
-
-  win.document.write(`<html><head><title>常年法律顾问服务报告</title><style>
-    body{font-family:'PingFang SC','SimSun';font-size:13px;color:#3a3a3a;line-height:1.8;padding:48px}
-    h1{text-align:center;font-size:22px;color:#4b5563;margin-bottom:4px}
-    .cover{text-align:center;padding:80px 0}
-    .cover h1{font-size:28px}
-    table{width:100%;border-collapse:collapse;margin:12px 0}
-    th,td{border:1px solid #e5e3de;padding:7px 10px;text-align:left;font-size:12px}
-    th{background:#ebe9e4;font-weight:600}
-    h2{color:#4b5563;font-size:16px;border-left:4px solid #4b5563;padding-left:10px;margin:28px 0 12px}
-    .bar{background:#ebe9e4;height:10px;border-radius:5px;overflow:hidden;margin:2px 0}
-    .bar i{display:block;height:100%;background:#b09878}
-  </style></head><body>
-    <div class="cover">
-      <h1>常年法律顾问服务年度报告</h1>
-      <p style="font-size:16px;margin-top:12px">${retainer.clientName}</p>
-      <p style="margin-top:8px">报告周期：${fmtDate(fromDate)} - ${fmtDate(toDate)}</p>
-      <p style="margin-top:40px">${retainer.contractNo ? retainer.contractNo : ''}</p>
-    </div>
-    <h2>第一部分 服务概况</h2>
-    <p>服务期限：${fmtDate(retainer.startDate)} - ${fmtDate(retainer.endDate)}</p>
-    <p>服务期内工作总次数：${works.length} 次，服务总时长：${totalHours} 小时</p>
-    <p>${summary || ''}</p>
-    <h2>第二部分 工作内容汇总</h2>
-    <table><tr><th>工作类型</th><th>次数</th><th>合计时长（小时）</th><th>占比</th></tr>${typeRows}<tr><td><b>合计</b></td><td><b>${works.length}</b></td><td><b>${totalHours}</b></td><td><b>100%</b></td></tr></table>
-    <h2>第三部分 月度工作分布</h2>
-    <table><tr><th>月份</th><th>次数</th><th>时长</th></tr>${monthRows}</table>
-    <h2>第四部分 工作明细列表</h2>
-    <table><tr><th>日期</th><th>类型</th><th>内容描述</th><th>时长</th></tr>${detailRows || '<tr><td colspan="4">无记录</td></tr>'}</table>
-    <h2>第五部分 总结与建议</h2>
-    <p style="min-height:120px">（律师填写）</p>
-    <h2>第六部分 续约提示</h2>
-    <p>合同到期日期：${fmtDate(retainer.endDate)}，建议提前两个月与客户沟通续约事宜。</p>
-    <p style="margin-top:60px;text-align:right">${receiver}（收）</p>
-    <p style="text-align:right">${fmtDateTime(Date.now())}</p>
-  </body></html>`)
-  win.document.close()
-  win.focus()
-  setTimeout(() => win.print(), 500)
+  return printHtmlDocument(buildRetainerReportDocument({
+    clientName: retainer.clientName,
+    period: `${fmtDate(fromDate)} - ${fmtDate(toDate)}`,
+    contractNo: retainer.contractNo || '',
+    servicePeriod: `${fmtDate(retainer.startDate)} - ${fmtDate(retainer.endDate)}`,
+    workCount: works.length,
+    totalHours: String(totalHours),
+    summary,
+    typeRows: Array.from(byType.entries()).map(([type, value]) => ({ type, count: value.count, hours: String(value.hours), percentage: `${((value.hours / Math.max(totalHours, 0.001)) * 100).toFixed(1)}%` })),
+    monthRows: Array.from(monthMap.entries()).map(([month, value]) => ({ month, count: value.count, hours: `${value.hours}h` })),
+    detailRows: works.map((work) => ({ date: fmtDate(work.date), type: work.type, content: work.content, hours: `${work.hours}h` })),
+    endDate: fmtDate(retainer.endDate),
+    receiver,
+    generatedAt: fmtDateTime(Date.now()),
+  }))
 }

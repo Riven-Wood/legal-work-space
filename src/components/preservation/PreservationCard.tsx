@@ -2,13 +2,13 @@ import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ShieldWarning, Plus, ArrowClockwise, PencilSimple, Trash, X } from '@phosphor-icons/react'
 import { db } from '../../db/database'
-import type { Preservation, PreservationType, PreservationMeasure } from '../../types'
+import type { LawCase, Preservation, PreservationType, PreservationMeasure } from '../../types'
 import { fmtDate, fmtDateInput, daysUntil } from '../../utils/dates'
 import { Modal, ConfirmDialog } from '../ui/Modal'
 import { Field, TextInput, Select, TextArea } from '../ui/Field'
 
-const PRES_TYPES: PreservationType[] = ['财产保全', '证据保全', '行为保全', '诉前保全', '诉讼保全', '执行保全', '其他']
-const PRES_MEASURES: PreservationMeasure[] = [
+export const PRES_TYPES: PreservationType[] = ['财产保全', '证据保全', '行为保全', '诉前保全', '诉讼保全', '执行保全', '其他']
+export const PRES_MEASURES: PreservationMeasure[] = [
   '冻结银行账户',
   '查封不动产',
   '查封动产',
@@ -38,10 +38,12 @@ export function preservationLevel(endDate: number) {
   return { text: `${d}天后到期`, cls: 'text-text-muted' }
 }
 
-export function autoCalcEndDate(startDate: number, measure: PreservationMeasure): number {
+export const PRESERVATION_RULE_NOTICE =
+  '《最高人民法院关于适用〈中华人民共和国民事诉讼法〉的解释》第485条规定：执行中冻结银行存款不得超过1年，查封、扣押动产不得超过2年，查封不动产、冻结其他财产权不得超过3年。辅助计算结果不直接等同于本案实际期限，请以法院裁定书、协助执行通知书等文书为准并人工核对；无法匹配的措施请手动录入。'
+
+export function autoCalcEndDate(startDate: number, measure: PreservationMeasure): number | undefined {
   const d = new Date(startDate)
   const years = (n: number) => new Date(d.setFullYear(d.getFullYear() + n)).getTime()
-  const months = (n: number) => new Date(d.setMonth(d.getMonth() + n)).getTime()
   switch (measure) {
     case '冻结银行账户':
       return years(1)
@@ -50,11 +52,13 @@ export function autoCalcEndDate(startDate: number, measure: PreservationMeasure)
     case '查封动产':
       return years(2)
     case '冻结股权':
-      return years(2)
+      return years(3)
     case '冻结债权':
+      return years(3)
+    case '扣押':
       return years(2)
     default:
-      return months(6)
+      return undefined
   }
 }
 
@@ -133,11 +137,16 @@ export function PreservationForm({
   open,
   onClose,
   caseId,
+  cases,
 }: {
   open: boolean
   onClose: () => void
-  caseId: number
+  /** 已关联案件 id（案件详情页传入时固定关联） */
+  caseId?: number
+  /** 可选择的案件列表：传入时显示案件选择下拉，支持不关联案件自由新增 */
+  cases?: LawCase[]
 }) {
+  const [selCase, setSelCase] = useState<number | ''>(caseId ?? '')
   const [type, setType] = useState<PreservationType>('财产保全')
   const [target, setTarget] = useState('')
   const [writNo, setWritNo] = useState('')
@@ -146,17 +155,24 @@ export function PreservationForm({
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [note, setNote] = useState('')
+  const [calculationHint, setCalculationHint] = useState('')
 
   const calcEnd = () => {
     if (!startDate) return
     const end = autoCalcEndDate(new Date(startDate).getTime(), measure)
+    if (end === undefined) {
+      setCalculationHint('该措施无法可靠匹配统一期限，请依据法院文书手动录入到期日期。')
+      return
+    }
     setEndDate(fmtDateInput(end))
+    setCalculationHint('已填入规则上限的辅助日期，请继续核对法院文书。')
   }
 
   const save = async () => {
     if (!target.trim() || !startDate || !endDate) return
+    const cid = selCase === '' ? 0 : Number(selCase)
     await db.preservations.add({
-      caseId,
+      caseId: cid,
       type,
       target: target.trim(),
       writNo: writNo.trim() || undefined,
@@ -170,17 +186,19 @@ export function PreservationForm({
       createdAt: Date.now(),
       updatedAt: Date.now(),
     })
-    // 同步日历事件
-    await db.events.add({
-      title: `保全到期：${target.trim()}`,
-      date: new Date(endDate).getTime(),
-      allDay: true,
-      type: 'preservation-expiry',
-      caseId,
-      reminder: '7d',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })
+    // 同步日历事件（仅关联到具体案件时）
+    if (cid !== 0) {
+      await db.events.add({
+        title: `保全到期：${target.trim()}`,
+        date: new Date(endDate).getTime(),
+        allDay: true,
+        type: 'preservation-expiry',
+        caseId: cid,
+        reminder: '7d',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+    }
     onClose()
     setTarget('')
     setWritNo('')
@@ -206,6 +224,21 @@ export function PreservationForm({
       }
     >
       <div className="grid grid-cols-2 gap-4">
+        {cases !== undefined && (
+          <div className="col-span-2">
+            <Field label="关联案件" hint="可不选择，直接登记待处理的保全预警">
+              <Select value={selCase} onChange={(e) => setSelCase(e.target.value === '' ? '' : Number(e.target.value))}>
+                <option value="">不关联案件（自由新增）</option>
+                {(cases ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.caseNo ? `（${c.caseNo}）` : ''}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        )}
         <Field label="保全类型" required>
           <Select value={type} onChange={(e) => setType(e.target.value as PreservationType)}>
             {PRES_TYPES.map((t) => (
@@ -242,13 +275,14 @@ export function PreservationForm({
           <div className="flex gap-2">
             <TextInput type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
             <button type="button" className="btn-ghost btn-sm shrink-0 whitespace-nowrap" onClick={calcEnd}>
-              自动计算
+              辅助计算
             </button>
           </div>
+          {calculationHint && <p className="mt-1 text-xs text-text-muted">{calculationHint}</p>}
         </Field>
         <div className="col-span-2">
           <p className="text-xs text-text-muted">
-            根据民事诉讼法，冻结银行存款期限不超过1年，查封动产不超过2年，查封不动产不超过3年，冻结股权不超过2年。自动计算仅为辅助参考，实际到期日以裁定书载明为准，请务必核对。
+            {PRESERVATION_RULE_NOTICE}
           </p>
         </div>
         <div className="col-span-2">

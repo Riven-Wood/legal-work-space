@@ -3,7 +3,7 @@ import type {
   LawCase,
   Client,
   DocFile,
-  DocTemplate,
+  DocFolder,
   CalendarEvent,
   TimeRecord,
   Invoice,
@@ -13,6 +13,8 @@ import type {
   RetainerReport,
   Preservation,
   PreservationRenewal,
+  LegalConsultation,
+  InvoiceFile,
   Settings,
   Todo,
   CaseTimeline,
@@ -23,7 +25,7 @@ export class LawyerDB extends Dexie {
   cases!: Table<LawCase, number>
   clients!: Table<Client, number>
   docs!: Table<DocFile, number>
-  templates!: Table<DocTemplate, number>
+  docFolders!: Table<DocFolder, number>
   events!: Table<CalendarEvent, number>
   timeRecords!: Table<TimeRecord, number>
   invoices!: Table<Invoice, number>
@@ -33,6 +35,8 @@ export class LawyerDB extends Dexie {
   retainerReports!: Table<RetainerReport, number>
   preservations!: Table<Preservation, number>
   preservationRenewals!: Table<PreservationRenewal, number>
+  legalConsultations!: Table<LegalConsultation, number>
+  invoiceFiles!: Table<InvoiceFile, number>
   settings!: Table<Settings, number>
   todos!: Table<Todo, number>
   timelines!: Table<CaseTimeline, number>
@@ -59,6 +63,89 @@ export class LawyerDB extends Dexie {
       timelines: '++id, caseId, date, type, createdAt, updatedAt, deleted',
       contactRecords: '++id, clientId, date, createdAt, updatedAt, deleted',
     })
+    // v2：移除 templates 表，新增案件文档分区表 docFolders，docs 增加 folderId 索引
+    this.version(2).stores({
+      cases: '++id, clientId, status, stage, cause, createdAt, updatedAt, deleted',
+      clients: '++id, name, type, createdAt, updatedAt, deleted',
+      docs: '++id, caseId, clientId, retainerId, type, category, folderId, createdAt, updatedAt, deleted',
+      docFolders: '++id, caseId, createdAt, updatedAt, deleted',
+      events: '++id, date, type, caseId, createdAt, updatedAt, deleted',
+      timeRecords: '++id, caseId, date, createdAt, updatedAt, deleted',
+      invoices: '++id, caseId, clientId, createdAt, updatedAt, deleted',
+      retainers: '++id, clientId, status, endDate, createdAt, updatedAt, deleted',
+      retainerWorks: '++id, retainerId, date, type, createdAt, updatedAt, deleted',
+      retainerPayments: '++id, retainerId, date, createdAt, updatedAt, deleted',
+      retainerReports: '++id, retainerId, createdAt, updatedAt, deleted',
+      preservations: '++id, caseId, type, endDate, status, createdAt, updatedAt, deleted',
+      preservationRenewals: '++id, preservationId, createdAt, updatedAt, deleted',
+      settings: '++id, createdAt, updatedAt',
+      todos: '++id, caseId, done, createdAt, updatedAt, deleted',
+      timelines: '++id, caseId, date, type, createdAt, updatedAt, deleted',
+      contactRecords: '++id, clientId, date, createdAt, updatedAt, deleted',
+    })
+    // v3：docs 增加 versionGroup 索引 —— 修复按版本组删除/移动/历史查询报错（此前未索引导致上传后无法删除）
+    this.version(3).stores({
+      cases: '++id, clientId, status, stage, cause, createdAt, updatedAt, deleted',
+      clients: '++id, name, type, createdAt, updatedAt, deleted',
+      docs: '++id, caseId, clientId, retainerId, type, category, folderId, versionGroup, createdAt, updatedAt, deleted',
+      docFolders: '++id, caseId, createdAt, updatedAt, deleted',
+      events: '++id, date, type, caseId, createdAt, updatedAt, deleted',
+      timeRecords: '++id, caseId, date, createdAt, updatedAt, deleted',
+      invoices: '++id, caseId, clientId, createdAt, updatedAt, deleted',
+      retainers: '++id, clientId, status, endDate, createdAt, updatedAt, deleted',
+      retainerWorks: '++id, retainerId, date, type, createdAt, updatedAt, deleted',
+      retainerPayments: '++id, retainerId, date, createdAt, updatedAt, deleted',
+      retainerReports: '++id, retainerId, createdAt, updatedAt, deleted',
+      preservations: '++id, caseId, type, endDate, status, createdAt, updatedAt, deleted',
+      preservationRenewals: '++id, preservationId, createdAt, updatedAt, deleted',
+      settings: '++id, createdAt, updatedAt',
+      todos: '++id, caseId, done, createdAt, updatedAt, deleted',
+      timelines: '++id, caseId, date, type, createdAt, updatedAt, deleted',
+      contactRecords: '++id, clientId, date, createdAt, updatedAt, deleted',
+    })
+    // v4：新增法律咨询表 legalConsultations（计时功能从账单分离，改造为法律咨询记录）
+    this.version(4).stores({
+      cases: '++id, clientId, status, stage, cause, createdAt, updatedAt, deleted',
+      clients: '++id, name, type, createdAt, updatedAt, deleted',
+      docs: '++id, caseId, clientId, retainerId, type, category, folderId, versionGroup, createdAt, updatedAt, deleted',
+      docFolders: '++id, caseId, createdAt, updatedAt, deleted',
+      events: '++id, date, type, caseId, createdAt, updatedAt, deleted',
+      timeRecords: '++id, caseId, date, createdAt, updatedAt, deleted',
+      invoices: '++id, caseId, clientId, createdAt, updatedAt, deleted',
+      retainers: '++id, clientId, status, endDate, createdAt, updatedAt, deleted',
+      retainerWorks: '++id, retainerId, date, type, createdAt, updatedAt, deleted',
+      retainerPayments: '++id, retainerId, date, createdAt, updatedAt, deleted',
+      retainerReports: '++id, retainerId, createdAt, updatedAt, deleted',
+      preservations: '++id, caseId, type, endDate, status, createdAt, updatedAt, deleted',
+      preservationRenewals: '++id, preservationId, createdAt, updatedAt, deleted',
+      legalConsultations: '++id, date, caseId, clientId, createdAt, updatedAt, deleted',
+      settings: '++id, createdAt, updatedAt',
+      todos: '++id, caseId, done, createdAt, updatedAt, deleted',
+      timelines: '++id, caseId, date, type, createdAt, updatedAt, deleted',
+      contactRecords: '++id, clientId, date, createdAt, updatedAt, deleted',
+    })
+    // v5：新增发票/票据材料表 invoiceFiles（计费改为用户自行上传发票等材料，不再自动生成账单）
+    this.version(5).stores({
+      cases: '++id, clientId, status, stage, cause, createdAt, updatedAt, deleted',
+      clients: '++id, name, type, createdAt, updatedAt, deleted',
+      docs: '++id, caseId, clientId, retainerId, type, category, folderId, versionGroup, createdAt, updatedAt, deleted',
+      docFolders: '++id, caseId, createdAt, updatedAt, deleted',
+      events: '++id, date, type, caseId, createdAt, updatedAt, deleted',
+      timeRecords: '++id, caseId, date, createdAt, updatedAt, deleted',
+      invoices: '++id, caseId, clientId, createdAt, updatedAt, deleted',
+      retainers: '++id, clientId, status, endDate, createdAt, updatedAt, deleted',
+      retainerWorks: '++id, retainerId, date, type, createdAt, updatedAt, deleted',
+      retainerPayments: '++id, retainerId, date, createdAt, updatedAt, deleted',
+      retainerReports: '++id, retainerId, createdAt, updatedAt, deleted',
+      preservations: '++id, caseId, type, endDate, status, createdAt, updatedAt, deleted',
+      preservationRenewals: '++id, preservationId, createdAt, updatedAt, deleted',
+      legalConsultations: '++id, date, caseId, clientId, createdAt, updatedAt, deleted',
+      invoiceFiles: '++id, date, kind, caseId, clientId, createdAt, updatedAt, deleted',
+      settings: '++id, createdAt, updatedAt',
+      todos: '++id, caseId, done, createdAt, updatedAt, deleted',
+      timelines: '++id, caseId, date, type, createdAt, updatedAt, deleted',
+      contactRecords: '++id, clientId, date, createdAt, updatedAt, deleted',
+    })
   }
 }
 
@@ -69,7 +156,7 @@ const TABLE_NAMES = [
   'cases',
   'clients',
   'docs',
-  'templates',
+  'docFolders',
   'events',
   'timeRecords',
   'invoices',
@@ -79,6 +166,8 @@ const TABLE_NAMES = [
   'retainerReports',
   'preservations',
   'preservationRenewals',
+  'legalConsultations',
+  'invoiceFiles',
   'todos',
   'timelines',
   'contactRecords',
@@ -124,7 +213,6 @@ export async function ensureSettings(): Promise<Settings> {
     firmName: '',
     hourlyRate: 800,
     includeRetainerHours: true,
-    version: '1.0.0',
   }
   await db.settings.add(def)
   return def

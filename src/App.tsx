@@ -1,45 +1,24 @@
+import { lazy, Suspense, useMemo } from 'react'
 import { AppProvider } from './store/AppContext'
 import { Sidebar } from './components/layout/Sidebar'
 import { TopBar } from './components/layout/TopBar'
 import { GlobalSearch } from './components/layout/GlobalSearch'
 import { useApp } from './store/AppContext'
-import Dashboard from './pages/Dashboard'
-import CaseList from './pages/cases/CaseList'
-import CaseDetail from './pages/cases/CaseDetail'
-import ClientList from './pages/clients/ClientList'
-import RetainerList from './pages/retainers/RetainerList'
-import RetainerDetail from './pages/retainers/RetainerDetail'
-import DocsPage from './pages/docs/DocsPage'
-import CalendarPage from './pages/calendar/CalendarPage'
-import BillingPage from './pages/billing/BillingPage'
-import PreservationCenter from './pages/preservation/PreservationCenter'
-import SettingsPage from './pages/settings/SettingsPage'
 import { PreservationAlert } from './components/preservation/PreservationAlert'
+import { getPageLoader, RouteErrorBoundary, RouteLoading } from './appRoutes'
 
 function Router() {
   const { nav } = useApp()
-  switch (nav.page) {
-    case 'dashboard':
-      return <Dashboard />
-    case 'cases':
-      return nav.caseId ? <CaseDetail /> : <CaseList />
-    case 'clients':
-      return <ClientList />
-    case 'retainers':
-      return nav.retainerId ? <RetainerDetail /> : <RetainerList />
-    case 'docs':
-      return <DocsPage />
-    case 'calendar':
-      return <CalendarPage />
-    case 'billing':
-      return <BillingPage />
-    case 'preservation':
-      return <PreservationCenter />
-    case 'settings':
-      return <SettingsPage />
-    default:
-      return <Dashboard />
-  }
+  const routeKey = `${nav.page}:${nav.caseId ?? ''}:${nav.retainerId ?? ''}`
+  const Page = useMemo(() => lazy(getPageLoader(nav)), [routeKey])
+
+  return (
+    <RouteErrorBoundary routeKey={routeKey}>
+      <Suspense fallback={<RouteLoading />}>
+        <Page />
+      </Suspense>
+    </RouteErrorBoundary>
+  )
 }
 
 function Shell() {

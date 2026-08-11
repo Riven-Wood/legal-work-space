@@ -99,6 +99,12 @@ export interface ContactRecord extends BaseEntity {
 export type DocType = 'pleading' | 'evidence' | 'judgment' | 'retainer' | 'other'
 export type DocCategory = 'filing' | 'evidence' | 'judgment' | 'retainer' | 'other'
 
+// 案件材料分区
+export interface DocFolder extends BaseEntity {
+  caseId: number
+  name: string
+}
+
 export interface DocFile extends BaseEntity {
   name: string
   type: DocType
@@ -106,29 +112,13 @@ export interface DocFile extends BaseEntity {
   caseId?: number
   clientId?: number
   retainerId?: number
+  folderId?: number // 所属案件分区
+  versionGroup?: string // 版本组标识：同一组为同一文件的多个版本
+  version?: number // 版本号（从 1 开始）
+  versionNote?: string // 版本说明
   size: number
   mime?: string
   data?: Blob // IndexedDB 存储文件内容
-  templateId?: number
-  content?: string // 草稿内容（富文本 HTML）
-}
-
-// ---- 模板 ----
-export type TemplateCategory =
-  | '起诉状'
-  | '答辩状'
-  | '代理词'
-  | '上诉状'
-  | '律师函'
-  | '法律意见书'
-  | '财产保全申请书'
-  | '证据目录'
-
-export interface DocTemplate extends BaseEntity {
-  name: string
-  category: TemplateCategory
-  description: string
-  content: string
 }
 
 // ---- 日程 ----
@@ -278,6 +268,38 @@ export interface PreservationRenewal extends BaseEntity {
   note?: string
 }
 
+// ---- 法律咨询 ----
+export interface LegalConsultation extends BaseEntity {
+  date: number // 咨询日期（当天 0 点时间戳）
+  start?: number // 计时开始时间戳
+  end?: number // 计时结束时间戳
+  minutes: number // 时长（分钟）
+  content: string // 咨询内容
+  consultant?: string // 咨询人/客户姓名（手填，优先展示）
+  clientId?: number // 关联客户（可选）
+  caseId?: number // 关联案件（可选）
+  fee?: number // 收费金额（可选）
+  paid: boolean // 是否已收款
+  source: 'timer' | 'manual'
+  timerId?: string // 计时会话标识，用于跨重启幂等保存
+}
+
+// ---- 发票/票据材料（用户自行上传，替代自动生成账单） ----
+export type InvoiceKind = 'invoice' | 'receipt' | 'transfer' | 'other'
+
+export interface InvoiceFile extends BaseEntity {
+  name: string // 文件名
+  date: number // 票据日期
+  kind: InvoiceKind // 类型：发票/收据/转账凭证/其他
+  caseId?: number // 关联案件（可选）
+  clientId?: number // 关联客户（可选）
+  amount?: number // 金额（可选）
+  note?: string
+  size: number
+  mime?: string
+  data?: Blob // IndexedDB 存储文件内容
+}
+
 // ---- 设置 ----
 export interface Settings extends BaseEntity {
   lawyerName: string
@@ -288,11 +310,4 @@ export interface Settings extends BaseEntity {
   bankAccount?: string
   hourlyRate: number
   includeRetainerHours: boolean
-  version?: string
-}
-
-// ---- 导出备份结构 ----
-export interface BackupData {
-  exportedAt: number
-  tables: Record<string, unknown[]>
 }
