@@ -17,7 +17,7 @@
 
 - macOS：打开 DMG 后将应用拖入「应用程序」。当前安装包未使用 Apple Developer ID 签名；首次打开如被系统拦截，请在 Finder 中按住 Control 点击应用，选择「打开」。
 - Windows：运行 `.exe` 安装包。当前安装包未进行商业代码签名，首次安装可能出现 SmartScreen 提示。
-- Linux：赋予 AppImage 执行权限后运行：`chmod +x Legal-Work-Space-1.0.0-linux-x64.AppImage`。
+- Linux：赋予 AppImage 执行权限后运行：`chmod +x Legal-Work-Space-1.0.0-linux-x64.AppImage`。如系统缺少 FUSE，可先安装 FUSE 2 兼容包，或使用 `--appimage-extract-and-run` 参数启动。
 
 升级前建议在「设置 → 数据管理」中导出全部数据。桌面端数据保存在当前系统用户的 Electron 应用数据目录中，覆盖安装新版本不会主动删除旧数据。
 

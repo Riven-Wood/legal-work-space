@@ -87,8 +87,7 @@
     "publish": {
       "provider": "github",
       "owner": "Riven-Wood",
-      "repo": "legal-work-space",
-      "releaseType": "release"
+      "repo": "legal-work-space"
     },
     "electronDist": "node_modules/electron/dist"
   }
