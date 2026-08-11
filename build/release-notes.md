@@ -1,6 +1,11 @@
-# Legal Work Space v1.0.0
+# Legal Work Space v1.1.0
 
-Legal Work Space 的首个正式发布版。这是一款面向独立执业律师的本地优先工作台，案件、客户、文档、日程和费用数据均保存在用户本地。
+Legal Work Space 是一款面向独立执业律师的本地优先工作台，案件、客户、文档、日程和费用数据均保存在用户本地。
+
+## 本版更新
+
+- **应用内更新**：软件启动时自动检查新版本，发现更新可在软件内一键下载安装包（设置页也可手动「检查更新」），无需再到 GitHub 手动查找下载
+- **客户管理增强**：客户详情支持直接编辑客户信息；支持删除客户（二次确认，删除后关联的案件、沟通记录、文档等业务数据仍保留）
 
 ## 主要功能
 
@@ -14,9 +19,9 @@ Legal Work Space 的首个正式发布版。这是一款面向独立执业律师
 
 ## 下载选择
 
-- Apple 芯片 Mac：`Legal-Work-Space-1.0.0-mac-arm64.dmg`
-- Intel Mac：`Legal-Work-Space-1.0.0-mac-x64.dmg`
-- Windows 10/11 x64：`Legal-Work-Space-1.0.0-win-x64.exe`
-- Linux x64：`Legal-Work-Space-1.0.0-linux-x64.AppImage`
+- Apple 芯片 Mac：`Legal-Work-Space-1.1.0-mac-arm64.dmg`
+- Intel Mac：`Legal-Work-Space-1.1.0-mac-x64.dmg`
+- Windows 10/11 x64：`Legal-Work-Space-1.1.0-win-x64.exe`
+- Linux x64：`Legal-Work-Space-1.1.0-linux-x64.AppImage`
 
-macOS 和 Windows 安装包当前未进行商业代码签名，首次打开时可能出现系统安全提示。具体安装方法见仓库 README。升级前建议先在「设置 → 数据管理」导出全部数据。
+macOS 和 Windows 安装包当前未进行商业代码签名，首次打开时可能出现系统安全提示。具体安装方法见仓库 README。覆盖安装不会丢失数据；升级前如需保险可先在「设置 → 数据管理」导出全部数据。

@@ -18,19 +18,19 @@ jobs:
           - os: macos-15
             args: '--mac --arm64'
             artifact: 'mac-arm64'
-            expected: 'release/Legal-Work-Space-1.0.0-mac-arm64.dmg'
+            suffix: 'mac-arm64.dmg'
           - os: macos-15-intel
             args: '--mac --x64'
             artifact: 'mac-x64'
-            expected: 'release/Legal-Work-Space-1.0.0-mac-x64.dmg'
+            suffix: 'mac-x64.dmg'
           - os: windows-latest
             args: '--win --x64'
             artifact: 'win'
-            expected: 'release/Legal-Work-Space-1.0.0-win-x64.exe'
+            suffix: 'win-x64.exe'
           - os: ubuntu-latest
             args: '--linux --x64'
             artifact: 'linux'
-            expected: 'release/Legal-Work-Space-1.0.0-linux-x64.AppImage'
+            suffix: 'linux-x64.AppImage'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +49,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node -e "const expected='v'+require('./package.json').version;if(process.env.RELEASE_TAG!==expected){throw new Error('Tag '+process.env.RELEASE_TAG+' does not match '+expected)}"
 
+      - name: Export package version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
       - name: Build renderer
         run: npm run build
 
@@ -59,32 +62,32 @@ jobs:
 
       - name: Verify expected installer exists
         env:
-          EXPECTED_INSTALLER: ${{ matrix.expected }}
+          EXPECTED_INSTALLER: release/Legal-Work-Space-${{ env.VERSION }}-${{ matrix.suffix }}
         run: node -e "const fs=require('fs');if(!fs.existsSync(process.env.EXPECTED_INSTALLER)){throw new Error('Missing '+process.env.EXPECTED_INSTALLER)}"
 
       - name: Verify macOS installer integrity
         if: runner.os == 'macOS'
         env:
-          EXPECTED_INSTALLER: ${{ matrix.expected }}
+          EXPECTED_INSTALLER: release/Legal-Work-Space-${{ env.VERSION }}-${{ matrix.suffix }}
         shell: bash
         run: |
           hdiutil verify "$EXPECTED_INSTALLER"
           ZIP_PATH="${EXPECTED_INSTALLER%.dmg}.zip"
           unzip -t "$ZIP_PATH"
           APP_PLIST="$(find release -path '*/Legal Work Space.app/Contents/Info.plist' -print -quit)"
-          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP_PLIST")" = "1.0.0"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP_PLIST")" = "$VERSION"
 
       - name: Verify Windows installer integrity
         if: runner.os == 'Windows'
         env:
-          EXPECTED_INSTALLER: ${{ matrix.expected }}
+          EXPECTED_INSTALLER: release/Legal-Work-Space-${{ env.VERSION }}-${{ matrix.suffix }}
         shell: pwsh
         run: 7z t "$env:EXPECTED_INSTALLER"
 
       - name: Verify Linux AppImage integrity
         if: runner.os == 'Linux'
         env:
-          EXPECTED_INSTALLER: ${{ matrix.expected }}
+          EXPECTED_INSTALLER: release/Legal-Work-Space-${{ env.VERSION }}-${{ matrix.suffix }}
         shell: bash
         run: |
           chmod +x "$EXPECTED_INSTALLER"
@@ -108,6 +111,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Export package version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
       - name: Download verified installers
         uses: actions/download-artifact@v4
         with:
@@ -119,13 +125,14 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('fs')
+          const version = require('./package.json').version
           const expected = [
-            'Legal-Work-Space-1.0.0-mac-arm64.dmg',
-            'Legal-Work-Space-1.0.0-mac-arm64.zip',
-            'Legal-Work-Space-1.0.0-mac-x64.dmg',
-            'Legal-Work-Space-1.0.0-mac-x64.zip',
-            'Legal-Work-Space-1.0.0-win-x64.exe',
-            'Legal-Work-Space-1.0.0-linux-x64.AppImage',
+            `Legal-Work-Space-${version}-mac-arm64.dmg`,
+            `Legal-Work-Space-${version}-mac-arm64.zip`,
+            `Legal-Work-Space-${version}-mac-x64.dmg`,
+            `Legal-Work-Space-${version}-mac-x64.zip`,
+            `Legal-Work-Space-${version}-win-x64.exe`,
+            `Legal-Work-Space-${version}-linux-x64.AppImage`,
           ].sort()
           const actual = fs.readdirSync('release-assets').sort()
           const missing = expected.filter((name) => !fs.existsSync(`release-assets/${name}`))
@@ -146,11 +153,11 @@ jobs:
             gh release create "$RELEASE_TAG" release-assets/* \
               --verify-tag \
               --draft \
-              --title "Legal Work Space v1.0.0" \
+              --title "Legal Work Space v$VERSION" \
               --notes-file build/release-notes.md
           fi
           gh release edit "$RELEASE_TAG" \
-            --title "Legal Work Space v1.0.0" \
+            --title "Legal Work Space v$VERSION" \
             --notes-file build/release-notes.md \
             --draft=false \
             --latest
