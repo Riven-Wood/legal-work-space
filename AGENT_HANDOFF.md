@@ -1,8 +1,8 @@
 # AGENT_HANDOFF.md — 律师工作台交接文档
 
 > **最后更新**: 2026-08-09
-> **版本**: v1.1.0
-> **Git**: `main` 分支, tag `v1.1.0`, 已推送到 GitHub (Riven-Wood/legal-work-space)
+> **版本**: v1.0.0
+> **Git**: `main` 分支，发布仓库 GitHub (Riven-Wood/legal-work-space)
 
 ---
 
@@ -397,5 +397,5 @@ await db.xxx.where('versionGroup').equals(vg).modify({ deleted: Date.now(), upda
 2. **DB 迁移**: 新增字段必须升级 Dexie 版本号（当前 v5），旧用户数据需保留
 3. **软删除**: 查询必须加 `.where('deleted').equals(0)` 过滤
 4. **Electron**: `base: './'` in vite.config.ts 是为了兼容 Electron file:// 协议
-5. **CI/CD**: 打 tag (`git tag v1.2.0 && git push origin v1.2.0`) 触发自动构建发布
+5. **CI/CD**: 打 tag (`git tag v1.0.0 && git push origin v1.0.0`) 触发自动构建发布
 6. **package-lock.json**: 根目录的 `package.json`（puppeteer-core）与项目无关，不要混淆

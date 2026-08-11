@@ -4,15 +4,33 @@
 
 纯前端本地应用：React + TypeScript + Tailwind CSS + Dexie.js（IndexedDB），数据完全保存在本地浏览器存储，隐私优先，不上传任何服务器。支持浏览器使用，也可打包为 macOS / Windows / Linux 桌面应用（Electron）。
 
+## 下载与安装
+
+请从 [GitHub Releases](https://github.com/Riven-Wood/legal-work-space/releases/latest) 下载最新版本。v1.0.0 安装包文件名如下：
+
+| 平台 | 适用设备 | 下载文件 |
+| --- | --- | --- |
+| macOS | Apple 芯片（M1/M2/M3/M4 等） | `Legal-Work-Space-1.0.0-mac-arm64.dmg` |
+| macOS | Intel 芯片 | `Legal-Work-Space-1.0.0-mac-x64.dmg` |
+| Windows | 64 位 Windows 10/11 | `Legal-Work-Space-1.0.0-win-x64.exe` |
+| Linux | 64 位 x86 Linux | `Legal-Work-Space-1.0.0-linux-x64.AppImage` |
+
+- macOS：打开 DMG 后将应用拖入「应用程序」。当前安装包未使用 Apple Developer ID 签名；首次打开如被系统拦截，请在 Finder 中按住 Control 点击应用，选择「打开」。
+- Windows：运行 `.exe` 安装包。当前安装包未进行商业代码签名，首次安装可能出现 SmartScreen 提示。
+- Linux：赋予 AppImage 执行权限后运行：`chmod +x Legal-Work-Space-1.0.0-linux-x64.AppImage`。
+
+升级前建议在「设置 → 数据管理」中导出全部数据。桌面端数据保存在当前系统用户的 Electron 应用数据目录中，覆盖安装新版本不会主动删除旧数据。
+
 ## 功能模块
 
 - **首页仪表盘**：期限预警横幅、数字卡片、今日待办、案件阶段分布、快捷入口
 - **案件管理**：卡片列表 + 阶段进度条 + 时间线 + 文档区 + 关键日期 + 工时费用 + 待办
 - **客户管理**：客户档案 + 沟通记录 + 利益冲突模糊检索
 - **常法客户**：服务进度条 + 工作记录 / 合同费用 / 统计概览 + 年度顾问报告自动生成
-- **文档与模板**：文档库 + 8 类内置文书模板 + 富文本编辑器 + 变量自动填充 + 导出 Word/PDF
+- **文档管理**：文档库 + 上传/预览/下载 + 文件分区 + 版本历史
 - **日历日程**：月/周/列表视图 + 期限自动计算（举证 +30 天、上诉 +15 天）
-- **计时与计费**：全局计时器 + 工时记录 + A4 账单预览 + 收入看板
+- **法律咨询**：咨询计时 + 关联客户/案件 + 咨询记录
+- **票据与收入**：发票/收据/转账凭证上传 + 收入看板
 - **保全提醒**：五级到期预警 + 汇总页 + 弹窗强制提醒 + 续期管理 + 风险报告
 - **设置**：律师信息 / 费率 / 数据导入导出（JSON 备份）
 

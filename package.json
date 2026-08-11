@@ -1,7 +1,10 @@
 {
   "name": "lawyer-workbench",
+  "description": "Local-first legal workspace for independent lawyers",
+  "author": "Riven-Wood",
+  "license": "UNLICENSED",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -43,6 +46,11 @@
   "build": {
     "appId": "com.lawyer.workbench",
     "productName": "Legal Work Space",
+    "artifactName": "Legal-Work-Space-${version}-${os}-${arch}.${ext}",
+    "releaseInfo": {
+      "releaseName": "Legal Work Space v1.0.0",
+      "releaseNotesFile": "build/release-notes.md"
+    },
     "directories": {
       "output": "release"
     },
@@ -79,7 +87,8 @@
     "publish": {
       "provider": "github",
       "owner": "Riven-Wood",
-      "repo": "legal-work-space"
+      "repo": "legal-work-space",
+      "releaseType": "release"
     },
     "electronDist": "node_modules/electron/dist"
   }

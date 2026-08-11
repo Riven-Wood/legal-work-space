@@ -1,0 +1,22 @@
+# Legal Work Space v1.0.0
+
+Legal Work Space 的首个正式发布版。这是一款面向独立执业律师的本地优先工作台，案件、客户、文档、日程和费用数据均保存在用户本地。
+
+## 主要功能
+
+- 案件、客户和常年法律顾问管理
+- 文档上传、预览、分区和版本历史
+- 月/周/列表日历及常用法律期限计算
+- 法律咨询计时与咨询记录
+- 发票、收据、转账凭证管理与收入看板
+- 保全到期预警、续期管理和日历联动
+- JSON 全量数据导出与导入
+
+## 下载选择
+
+- Apple 芯片 Mac：`Legal-Work-Space-1.0.0-mac-arm64.dmg`
+- Intel Mac：`Legal-Work-Space-1.0.0-mac-x64.dmg`
+- Windows 10/11 x64：`Legal-Work-Space-1.0.0-win-x64.exe`
+- Linux x64：`Legal-Work-Space-1.0.0-linux-x64.AppImage`
+
+macOS 和 Windows 安装包当前未进行商业代码签名，首次打开时可能出现系统安全提示。具体安装方法见仓库 README。升级前建议先在「设置 → 数据管理」导出全部数据。
