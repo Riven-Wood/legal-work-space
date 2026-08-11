@@ -121,12 +121,17 @@ jobs:
           const fs = require('fs')
           const expected = [
             'Legal-Work-Space-1.0.0-mac-arm64.dmg',
+            'Legal-Work-Space-1.0.0-mac-arm64.zip',
             'Legal-Work-Space-1.0.0-mac-x64.dmg',
+            'Legal-Work-Space-1.0.0-mac-x64.zip',
             'Legal-Work-Space-1.0.0-win-x64.exe',
             'Legal-Work-Space-1.0.0-linux-x64.AppImage',
-          ]
+          ].sort()
+          const actual = fs.readdirSync('release-assets').sort()
           const missing = expected.filter((name) => !fs.existsSync(`release-assets/${name}`))
           if (missing.length) throw new Error(`Missing release assets: ${missing.join(', ')}`)
+          const unexpected = actual.filter((name) => !expected.includes(name))
+          if (unexpected.length) throw new Error(`Unexpected release assets: ${unexpected.join(', ')}`)
           NODE
           sha256sum release-assets/* > release-assets/SHA256SUMS.txt
 
