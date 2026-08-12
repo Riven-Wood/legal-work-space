@@ -48,7 +48,7 @@
     "productName": "Legal Work Space",
     "artifactName": "Legal-Work-Space-${version}-${os}-${arch}.${ext}",
     "releaseInfo": {
-      "releaseName": "Legal Work Space v1.0.0",
+      "releaseName": "Legal Work Space v1.1.0",
       "releaseNotesFile": "build/release-notes.md"
     },
     "directories": {

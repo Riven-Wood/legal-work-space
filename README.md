@@ -6,18 +6,49 @@
 
 ## 下载与安装
 
-请从 [GitHub Releases](https://github.com/Riven-Wood/legal-work-space/releases/latest) 下载最新版本。v1.0.0 安装包文件名如下：
+请从 [GitHub Releases](https://github.com/Riven-Wood/legal-work-space/releases/latest) 下载最新版本。v1.1.0 安装包文件名如下：
 
 | 平台 | 适用设备 | 下载文件 |
 | --- | --- | --- |
-| macOS | Apple 芯片（M1/M2/M3/M4 等） | `Legal-Work-Space-1.0.0-mac-arm64.dmg` |
-| macOS | Intel 芯片 | `Legal-Work-Space-1.0.0-mac-x64.dmg` |
-| Windows | 64 位 Windows 10/11 | `Legal-Work-Space-1.0.0-win-x64.exe` |
-| Linux | 64 位 x86 Linux | `Legal-Work-Space-1.0.0-linux-x64.AppImage` |
+| macOS | Apple 芯片（M1/M2/M3/M4 等） | `Legal-Work-Space-1.1.0-mac-arm64.dmg` |
+| macOS | Intel 芯片 | `Legal-Work-Space-1.1.0-mac-x64.dmg` |
+| Windows | 64 位 Windows 10/11 | `Legal-Work-Space-1.1.0-win-x64.exe` |
+| Linux | 64 位 x86 Linux | `Legal-Work-Space-1.1.0-linux-x64.AppImage` |
 
-- macOS：打开 DMG 后将应用拖入「应用程序」。当前安装包未使用 Apple Developer ID 签名；首次打开如被系统拦截，请在 Finder 中按住 Control 点击应用，选择「打开」。
-- Windows：运行 `.exe` 安装包。当前安装包未进行商业代码签名，首次安装可能出现 SmartScreen 提示。
-- Linux：赋予 AppImage 执行权限后运行：`chmod +x Legal-Work-Space-1.0.0-linux-x64.AppImage`。如系统缺少 FUSE，可先安装 FUSE 2 兼容包，或使用 `--appimage-extract-and-run` 参数启动。
+### macOS 安装步骤
+
+当前 macOS 安装包未使用 Apple Developer ID 签名与公证，从浏览器下载后首次打开时系统会提示「已损坏」或「无法打开」。这是 macOS Gatekeeper 对未签名应用的默认拦截行为，**安装包本身没有损坏**。请按以下任一方法处理：
+
+**方法一（推荐）：在终端中移除隔离属性**
+
+下载 `.dmg` 后，在终端执行（请将路径替换为你实际下载的文件路径）：
+
+```bash
+xattr -d com.apple.quarantine ~/Downloads/Legal-Work-Space-1.1.0-mac-arm64.dmg
+```
+
+然后正常双击打开 DMG，将「Legal Work Space」拖入「应用程序」即可。
+
+**方法二：右键打开**
+
+1. 在 Finder 中双击 DMG 挂载后，把 `Legal Work Space.app` 拖入「应用程序」。
+2. 在「应用程序」中找到 `Legal Work Space`，按住 Control 点击（或右键），选择「打开」。
+3. 弹出的安全提示框中选择「打开」即可，之后不会再出现该提示。
+
+### Windows 安装步骤
+
+运行 `.exe` 安装包。当前安装包未进行商业代码签名，首次安装可能出现 SmartScreen 提示，点击「更多信息 → 仍要运行」即可继续。
+
+### Linux 安装步骤
+
+赋予 AppImage 执行权限后运行：
+
+```bash
+chmod +x Legal-Work-Space-1.1.0-linux-x64.AppImage
+./Legal-Work-Space-1.1.0-linux-x64.AppImage
+```
+
+如系统缺少 FUSE，可先安装 FUSE 2 兼容包，或使用 `--appimage-extract-and-run` 参数启动。
 
 升级前建议在「设置 → 数据管理」中导出全部数据。桌面端数据保存在当前系统用户的 Electron 应用数据目录中，覆盖安装新版本不会主动删除旧数据。
 
