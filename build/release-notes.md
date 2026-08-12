@@ -2,6 +2,38 @@
 
 Legal Work Space 是一款面向独立执业律师的本地优先工作台，案件、客户、文档、日程和费用数据均保存在用户本地。
 
+## macOS 用户：首次安装必读
+
+由于安装包未做 Apple 代码签名，从浏览器下载后双击 `.dmg` 可能提示「文件已损坏」或「无法打开」。**安装包本身没有损坏**，这是 macOS Gatekeeper 对未签名应用的默认拦截行为。
+
+**推荐方法：终端一键安装**
+
+打开「终端」应用（在启动台搜索"终端"，或在「应用程序 → 实用工具」里找到），复制粘贴下面这一行命令并回车，脚本会自动下载、绕过限制并安装到应用程序文件夹：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Riven-Wood/legal-work-space/main/install-mac.sh | bash
+```
+
+脚本会自动识别 Mac 芯片架构（Apple / Intel），下载对应版本并完成全部安装步骤。
+
+**手动方法：先下载再移除隔离属性**
+
+1. 从下方「下载选择」中下载对应的 `.dmg` 文件。
+2. 打开「终端」，执行（路径请按实际替换）：
+
+   ```bash
+   xattr -d com.apple.quarantine ~/Downloads/Legal-Work-Space-1.1.0-mac-arm64.dmg
+   ```
+
+3. 双击 dmg，将 `Legal Work Space` 拖入「应用程序」即可。
+4. 若启动时仍提示无法打开，对 `.app` 也执行一次：
+
+   ```bash
+   sudo xattr -cr "/Applications/Legal Work Space.app"
+   ```
+
+> 注：macOS 15+ 收紧了 Gatekeeper，「右键 → 打开」的绕过方式可能失效，请使用上述终端方法。
+
 ## 本版更新
 
 - **应用内更新**：软件启动时自动检查新版本，发现更新可在软件内一键下载安装包（设置页也可手动「检查更新」），无需再到 GitHub 手动查找下载
@@ -28,23 +60,19 @@ Legal Work Space 是一款面向独立执业律师的本地优先工作台，案
 
 ### macOS
 
-当前 macOS 安装包未使用 Apple Developer ID 签名与公证，从浏览器下载后首次打开时系统可能提示「已损坏」或「无法打开」。这是 macOS Gatekeeper 对未签名应用的默认拦截行为，安装包本身没有损坏。请按以下任一方法处理：
+详见上方「macOS 用户：首次安装必读」，推荐使用一键安装脚本：
 
-**方法一（推荐）：在终端中移除隔离属性**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Riven-Wood/legal-work-space/main/install-mac.sh | bash
+```
 
-下载 `.dmg` 后，在终端执行（请将路径替换为你实际下载的文件路径）：
+如需手动操作，下载 `.dmg` 后执行：
 
 ```bash
 xattr -d com.apple.quarantine ~/Downloads/Legal-Work-Space-1.1.0-mac-arm64.dmg
 ```
 
-然后正常双击打开 DMG，将「Legal Work Space」拖入「应用程序」即可。
-
-**方法二：右键打开**
-
-1. 在 Finder 中双击 DMG 挂载后，把 `Legal Work Space.app` 拖入「应用程序」。
-2. 在「应用程序」中找到 `Legal Work Space`，按住 Control 点击（或右键），选择「打开」。
-3. 弹出的安全提示框中选择「打开」即可，之后不会再出现该提示。
+再双击 dmg 完成安装。
 
 ### Windows
 

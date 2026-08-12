@@ -17,9 +17,19 @@
 
 ### macOS 安装步骤
 
-当前 macOS 安装包未使用 Apple Developer ID 签名与公证，从浏览器下载后首次打开时系统会提示「已损坏」或「无法打开」。这是 macOS Gatekeeper 对未签名应用的默认拦截行为，**安装包本身没有损坏**。请按以下任一方法处理：
+当前 macOS 安装包未使用 Apple Developer ID 签名与公证，从浏览器下载后首次打开时系统会提示「已损坏」或「无法打开」。这是 macOS Gatekeeper 对未签名应用的默认拦截行为，**安装包本身没有损坏**。
 
-**方法一（推荐）：在终端中移除隔离属性**
+**方法一（推荐）：终端一键安装脚本**
+
+打开「终端」应用，复制粘贴下面这一行命令并回车，脚本会自动下载并完成全部安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Riven-Wood/legal-work-space/main/install-mac.sh | bash
+```
+
+脚本会自动识别 Apple / Intel 芯片、下载对应版本、移除隔离属性并安装到「应用程序」。
+
+**方法二：手动下载并移除隔离属性**
 
 下载 `.dmg` 后，在终端执行（请将路径替换为你实际下载的文件路径）：
 
@@ -27,13 +37,13 @@
 xattr -d com.apple.quarantine ~/Downloads/Legal-Work-Space-1.1.0-mac-arm64.dmg
 ```
 
-然后正常双击打开 DMG，将「Legal Work Space」拖入「应用程序」即可。
+然后正常双击打开 DMG，将「Legal Work Space」拖入「应用程序」即可。若启动时仍提示无法打开，对 `.app` 也执行一次：
 
-**方法二：右键打开**
+```bash
+sudo xattr -cr "/Applications/Legal Work Space.app"
+```
 
-1. 在 Finder 中双击 DMG 挂载后，把 `Legal Work Space.app` 拖入「应用程序」。
-2. 在「应用程序」中找到 `Legal Work Space`，按住 Control 点击（或右键），选择「打开」。
-3. 弹出的安全提示框中选择「打开」即可，之后不会再出现该提示。
+> macOS 15+ 收紧了 Gatekeeper，「右键 → 打开」的绕过方式可能失效，请使用上述终端方法。
 
 ### Windows 安装步骤
 
